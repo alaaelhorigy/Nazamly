@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>نظّملي | المنقذ الدراسي — رفيقك الشخصي لتنظيم وقتك ودروسك</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    if (window.tailwind) {
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Cairo', 'sans-serif'],
+              quran: ['Amiri', 'serif'],
+            }
+          }
+        }
+      };
+    }
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="icon" type="image/png" href="/logo.png" />
+
+  <style>
+    @keyframes giftShakeLoop {
+      0%, 100% { transform: rotate(0deg) scale(1); }
+      10% { transform: rotate(-10deg) scale(1.06); }
+      20% { transform: rotate(10deg) scale(1.06); }
+      30% { transform: rotate(-8deg) scale(1.03); }
+      40% { transform: rotate(8deg) scale(1.03); }
+      50% { transform: rotate(0deg) scale(1); }
+    }
+    .gift-shaking {
+      animation: giftShakeLoop 1.5s ease-in-out infinite;
+    }
+    .gift-opened-calm {
+      animation: none !important;
+    }
+    @media (min-width: 1024px) {
+      .sidebar-expanded { width: 16rem; }
+      .sidebar-collapsed { width: 4.5rem; }
+      .sidebar-collapsed .sidebar-label { display: none; }
+      .sidebar-collapsed .sidebar-item-btn { justify-content: center; padding-left: 0.5rem; padding-right: 0.5rem; }
+    }
+  </style>
+</head>
+<body class="nazamly-body font-sans antialiased min-h-screen flex flex-col transition-colors duration-300 overflow-x-hidden">
+
+  <!-- طبقة الاحتفال بالورق الملون -->
+  <div id="celebrationLayer" class="pointer-events-none fixed inset-0 z-50 overflow-hidden hidden"></div>
+
+  <!-- نافذة الهدية المنبثقة في منتصف الشاشة -->
+  <div id="giftCenterModal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+    <div id="giftModalInnerCard" class="gift-paper-sheet w-full max-w-lg rounded-3xl p-6 sm:p-8 text-center relative shadow-2xl border">
+      <div class="inline-flex items-center gap-1.5 px-4 py-1 rounded-full text-xs font-extrabold gift-type-pill mb-4">
+        <span>📜</span>
+        <span id="giftTypeLabel">رسالة لك</span>
+      </div>
+
+      <blockquote id="giftMainQuote" class="font-quran text-xl sm:text-2xl font-bold leading-loose gift-quote-text mb-2"></blockquote>
+      <p id="giftSourceCitation" class="text-xs sm:text-sm font-extrabold gift-source-text mb-3"></p>
+      <p id="giftComfortNote" class="text-xs sm:text-sm leading-relaxed gift-note-text rounded-2xl p-4 mb-5"></p>
+
+      <div class="flex flex-wrap items-center justify-center gap-3">
+        <button id="nextGiftBtn" type="button" class="px-5 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold cta-primary-btn cursor-pointer">
+          افتح هدية أخرى ✨
+        </button>
+        <button id="closeGiftBtn" type="button" class="px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold cta-secondary-btn border cursor-pointer">
+          إغلاق
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- خلفية إغلاق القائمة على الموبايل -->
+  <div id="mobileSidebarBackdrop" class="hidden fixed inset-0 z-30 bg-black/50 lg:hidden"></div>
+
+  <!-- الشريط العلوي -->
+  <header class="sticky top-0 z-40 nav-glass transition-all duration-300">
+    <div class="max-w-full mx-auto px-3 sm:px-6 py-2.5 flex items-center justify-between gap-2">
+
+      <div class="flex items-center gap-2.5">
+        <button
+          id="toggleSidebarBtn"
+          type="button"
+          aria-label="القائمة الجانبية"
+          class="w-10 h-10 rounded-xl border cta-secondary-btn flex items-center justify-center text-lg font-black cursor-pointer"
+        >
+          ☰
+        </button>
+
+        <button type="button" data-page="page-home" class="page-switch-btn flex items-center gap-2.5 shrink-0 cursor-pointer">
+          <img
+            src="/logo.png"
+            alt="شعار نظّملي"
+            class="w-9 h-9 sm:w-10 sm:h-10 rounded-full object-cover border border-amber-400/50 shadow-md shrink-0"
+          />
+          <span class="text-lg sm:text-xl font-black tracking-tight brand-title-text">نظّملي</span>
+        </button>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          data-page="page-account"
+          class="page-switch-btn px-2.5 sm:px-3 py-2 rounded-xl text-xs font-extrabold cta-secondary-btn border flex items-center gap-1 cursor-pointer max-w-36 truncate"
+        >
+          <span>👤</span>
+          <span id="headerAccountLabel" class="truncate">حسابي</span>
+        </button>
+
+        <button
+          id="themeToggleBtn"
+          type="button"
+          aria-label="تبديل الوضع"
+          class="theme-pill relative flex items-center justify-between w-15 sm:w-16 h-9 px-1.5 rounded-full border cursor-pointer select-none shrink-0"
+        >
+          <span class="text-xs sm:text-sm z-10 leading-none">☀️</span>
+          <span class="text-xs sm:text-sm z-10 leading-none">🌙</span>
+          <span id="themeKnob" class="theme-knob absolute top-1 w-7 h-7 rounded-full shadow-md transition-transform duration-300"></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- الحاوية الرئيسية -->
+  <div class="flex-1 flex relative">
+
+    <!-- الشريط الجانبي للتنقل بين الصفحات -->
+    <aside
+      id="appSidebar"
+      class="sidebar-expanded fixed lg:sticky top-14 sm:top-16 right-0 z-40 h-[calc(100vh-3.5rem)] sm:h-[calc(100vh-4rem)] w-64 translate-x-full lg:translate-x-0 shrink-0 nav-glass border-l panel-divider transition-all duration-300 flex flex-col justify-between py-4 px-2.5 overflow-y-auto"
+    >
+      <div class="space-y-2">
+        <div class="flex items-center justify-between px-2 pb-2 border-b panel-divider">
+          <span class="sidebar-label text-xs font-extrabold card-subtitle">التنقل بين الصفحات</span>
+          <button
+            id="collapseSidebarInnerBtn"
+            type="button"
+            class="text-xs font-extrabold px-2 py-1 rounded-lg cta-secondary-btn border cursor-pointer"
+          >
+            ✕ / ⇄
+          </button>
+        </div>
+
+        <button type="button" data-page="page-home" class="page-switch-btn sidebar-item-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold cta-primary-btn cursor-pointer">
+          <span class="text-lg">🏠</span>
+          <span class="sidebar-label">الرئيسية والمذاكرة</span>
+        </button>
+
+        <button type="button" data-page="page-calm-mind" class="page-switch-btn sidebar-item-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold cta-secondary-btn border cursor-pointer">
+          <span class="text-lg">🌿</span>
+          <span class="sidebar-label">عقلية هادئة</span>
+        </button>
+
+        <button type="button" data-page="page-pomodoro" class="page-switch-btn sidebar-item-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold cta-secondary-btn border cursor-pointer">
+          <span class="text-lg">⏱️</span>
+          <span class="sidebar-label">بومودورو وستوب واتش</span>
+        </button>
+
+        <button type="button" data-page="page-account" class="page-switch-btn sidebar-item-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold cta-secondary-btn border cursor-pointer">
+          <span class="text-lg">👤</span>
+          <span class="sidebar-label">حسابي وسجلي</span>
+        </button>
+
+        <button type="button" data-page="page-about" class="page-switch-btn sidebar-item-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold cta-secondary-btn border cursor-pointer">
+          <span class="text-lg">🎬</span>
+          <span class="sidebar-label">عنّا وشرح المنصة</span>
+        </button>
+      </div>
+
+      <div class="sidebar-label pt-3 border-t panel-divider text-center">
+        <p class="text-[11px] card-subtitle">منصة نظّملي التعليمية</p>
+      </div>
+    </aside>
+
+    <!-- محتوى الصفحات -->
+    <div class="flex-1 min-w-0 max-w-6xl mx-auto px-3.5 sm:px-6 py-5 space-y-6">
+
+      <!-- تنبيه عام -->
+      <div id="globalAlert" class="hidden rounded-2xl p-3.5 sm:p-4 border text-xs sm:text-sm font-bold flex items-center justify-between gap-3">
+        <span id="globalAlertText" class="leading-relaxed"></span>
+        <button type="button" id="closeAlertBtn" class="text-xl leading-none cursor-pointer shrink-0">&times;</button>
+      </div>
+
+      <!-- الصفحة 1: الرئيسية ومساحة المذاكرة -->
+      <div id="page-home" class="app-page-view space-y-6">
+
+        <section class="hero-card rounded-3xl p-5 sm:p-9 border">
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+            <div class="lg:col-span-7 text-center lg:text-right space-y-3.5">
+              <div class="inline-flex items-center gap-2 px-3.5 py-1 rounded-full text-xs font-extrabold badge-pill">
+                <span>✨</span>
+                <span>رفيقك الشخصي لتنظيم وقتك وتبسيط دروسك بهدوء</span>
+              </div>
+              <h1 class="text-3xl sm:text-5xl font-black tracking-tight brand-hero-heading leading-tight">
+                نظّملي — المنقذ الدراسي
+              </h1>
+              <p class="text-xs sm:text-base leading-relaxed hero-description">
+                حوّل دروسك وكتبك PDF وصورك إلى خطط مذاكرة بالتواريخ، وملخصات شاملة، وشرح صوتي مسموع، واختبارات تفاعلية بضغطة واحدة.
+              </p>
+              <div class="pt-1 flex flex-wrap items-center justify-center lg:justify-start gap-2.5">
+                <button type="button" id="scrollToWorkspaceBtn" class="px-5 py-3 rounded-2xl text-xs sm:text-sm font-extrabold cta-primary-btn shadow-md cursor-pointer">
+                  ابدأ المذاكرة 🚀
+                </button>
+                <button type="button" id="scrollToFeaturesBtn" class="px-4 py-3 rounded-2xl text-xs sm:text-sm font-bold cta-secondary-btn border cursor-pointer">
+                  مميزاتنا ✨
+                </button>
+                <button type="button" data-page="page-calm-mind" class="page-switch-btn px-4 py-3 rounded-2xl text-xs sm:text-sm font-bold cta-secondary-btn border cursor-pointer">
+                  عقلية هادئة 🌿
+                </button>
+              </div>
+            </div>
+
+            <div class="lg:col-span-5 flex items-center justify-center">
+              <div class="book-stage relative w-52 h-52 sm:w-64 sm:h-64 flex items-center justify-center select-none">
+                <div class="book-aura absolute inset-6 rounded-full blur-2xl pointer-events-none"></div>
+                <svg class="glowing-book relative z-10 w-44 h-44 sm:w-52 sm:h-52 drop-shadow-2xl" viewBox="0 0 260 220" fill="none">
+                  <ellipse cx="130" cy="182" rx="86" ry="16" fill="#F59E0B" fill-opacity="0.22"/>
+                  <path d="M32 135 L130 165 L228 135 L228 144 L130 174 L32 144 Z" fill="#1E1B4B"/>
+                  <path d="M38 78 Q85 72 130 92 L130 162 Q85 142 38 148 Z" fill="#FFFFFF" stroke="#FDE68A" stroke-width="1.5"/>
+                  <path d="M222 78 Q175 72 130 92 L130 162 Q175 142 222 148 Z" fill="#FFFFFF" stroke="#FDE68A" stroke-width="1.5"/>
+                  <line x1="54" y1="98" x2="112" y2="108" stroke="#94A3B8" stroke-width="2.5" stroke-linecap="round"/>
+                  <line x1="54" y1="112" x2="112" y2="122" stroke="#94A3B8" stroke-width="2.5" stroke-linecap="round"/>
+                  <line x1="148" y1="108" x2="206" y2="98" stroke="#94A3B8" stroke-width="2.5" stroke-linecap="round"/>
+                  <line x1="148" y1="122" x2="206" y2="112" stroke="#94A3B8" stroke-width="2.5" stroke-linecap="round"/>
+                  <path d="M130 34 L134 45 L146 49 L134 53 L130 64 L126 53 L114 49 L126 45 Z" fill="#FDE047"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- الهدية -->
+        <div class="flex justify-start">
+          <button
+            id="giftBoxTrigger"
+            type="button"
+            aria-label="افتح الهدية"
+            class="gift-shaking relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl border inner-subpanel flex items-center justify-center cursor-pointer focus:outline-none shadow-lg"
+          >
+            <span id="giftBoxEmoji" class="text-3xl sm:text-4xl select-none">🎁</span>
+          </button>
+        </div>
+
+        <!-- خانة مميزاتنا -->
+        <section id="featuresSection" class="glass-panel rounded-3xl p-5 sm:p-7 border space-y-4 scroll-mt-20">
+          <div class="pb-3 border-b panel-divider">
+            <span class="text-xs font-extrabold px-3 py-1 rounded-full badge-pill">مميزاتنا</span>
+            <h2 class="text-lg sm:text-2xl font-black card-title mt-2">مميزات منصة نظّملي</h2>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            <div class="feature-card rounded-2xl p-4 border space-y-1">
+              <div class="text-xl">📄</div>
+              <h3 class="text-sm font-extrabold card-title">تلخيص الكتب الكبيرة والصور</h3>
+              <p class="text-xs card-subtitle leading-relaxed">معالجة النصوص الطويلة وملفات PDF والصور واستخراج ملخص شامل ومنظم.</p>
+            </div>
+            <div class="feature-card rounded-2xl p-4 border space-y-1">
+              <div class="text-xl">🗓️</div>
+              <h3 class="text-sm font-extrabold card-title">خطط مذاكرة بالتواريخ والساعات</h3>
+              <p class="text-xs card-subtitle leading-relaxed">توزيع المواد والدروس مع احتفال وصوت تشجيعي عند إكمال الخطة.</p>
+            </div>
+            <div class="feature-card rounded-2xl p-4 border space-y-1">
+              <div class="text-xl">🔊</div>
+              <h3 class="text-sm font-extrabold card-title">شرح صوتي مسموع وتفاعلي</h3>
+              <p class="text-xs card-subtitle leading-relaxed">استمع لشرح الدرس بصوت واضح وأوقف الشرح في أي لحظة لطرح سؤالك.</p>
+            </div>
+            <div class="feature-card rounded-2xl p-4 border space-y-1">
+              <div class="text-xl">🌿</div>
+              <h3 class="text-sm font-extrabold card-title">عقلية هادئة</h3>
+              <p class="text-xs card-subtitle leading-relaxed">ركن دافئ للحوار وتجديد النشاط الذهني بحلول عملية ونصائح مطمئنة.</p>
+            </div>
+            <div class="feature-card rounded-2xl p-4 border space-y-1">
+              <div class="text-xl">⏱️</div>
+              <h3 class="text-sm font-extrabold card-title">بومودورو وستوب واتش</h3>
+              <p class="text-xs card-subtitle leading-relaxed">مؤقت مرن تحدد فيه وقتك أو تختار من الأوقات المقترحة لرفع تركيزك.</p>
+            </div>
+            <div class="feature-card rounded-2xl p-4 border space-y-1">
+              <div class="text-xl">🔐</div>
+              <h3 class="text-sm font-extrabold card-title">حساب آمن يحفظ سجلّك</h3>
+              <p class="text-xs card-subtitle leading-relaxed">حفظ جميع ملخصاتك وخططك واختباراتك للرجوع إليها في أي وقت.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- مساحة العمل -->
+        <section id="workspaceSection" class="glass-panel rounded-3xl p-4 sm:p-7 border space-y-5 scroll-mt-20">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b panel-divider">
+            <div>
+              <h2 class="text-base sm:text-xl font-black card-title flex items-center gap-2">
+                <span>📚</span>
+                <span>أدخل دروسك أو ملفاتك أو صورك واختر المطلوب</span>
+              </h2>
+            </div>
+            <button id="clearInputsBtn" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold cta-secondary-btn border cursor-pointer">
+              مسح الكل
+            </button>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <div class="lg:col-span-6 flex flex-col">
+              <label for="studyTextInput" class="block text-xs sm:text-sm font-extrabold card-title mb-1.5">
+                ✍️ نص الدرس أو المواد المطلوبة:
+              </label>
+              <textarea
+                id="studyTextInput"
+                rows="6"
+                placeholder="اكتب هنا نص الدرس أو عناوين الفصول..."
+                class="w-full flex-1 rounded-2xl p-3.5 text-sm leading-relaxed input-surface border focus:outline-none focus:ring-2 focus:ring-amber-400 resize-y"
+              ></textarea>
+              <div class="mt-1.5 flex items-center justify-between text-xs font-bold card-subtitle">
+                <span>الوضع: <strong id="activeModeBadge" class="card-title">ملخص شامل</strong></span>
+                <span id="textCharCounter">0 حرف</span>
+              </div>
+            </div>
+
+            <div class="lg:col-span-6 space-y-3.5">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label for="docFileInput" class="dropzone-box rounded-2xl p-3.5 border-2 border-dashed flex flex-col items-center justify-center text-center cursor-pointer">
+                  <span class="text-2xl mb-1">📁</span>
+                  <span class="text-xs font-extrabold card-title">رفع ملف PDF أو TXT</span>
+                  <span class="text-[11px] card-subtitle mt-0.5">يدعم الكتب والملفات الكبيرة</span>
+                  <input id="docFileInput" type="file" accept=".pdf,.txt,application/pdf,text/plain" multiple class="hidden" />
+                </label>
+
+                <label for="imageFileInput" class="dropzone-box rounded-2xl p-3.5 border-2 border-dashed flex flex-col items-center justify-center text-center cursor-pointer">
+                  <span class="text-2xl mb-1">🖼️</span>
+                  <span class="text-xs font-extrabold card-title">رفع صور (جدول / كتاب)</span>
+                  <span class="text-[11px] card-subtitle mt-0.5">JPG, PNG, WEBP</span>
+                  <input id="imageFileInput" type="file" accept="image/jpeg,image/png,image/webp" multiple class="hidden" />
+                </label>
+              </div>
+
+              <div id="docFilesList" class="space-y-1.5"></div>
+              <div id="imageThumbnailsGrid" class="grid grid-cols-3 sm:grid-cols-4 gap-2"></div>
+
+              <div id="availableTimeWrapper" class="hidden">
+                <label for="availableTimeInput" class="block text-xs sm:text-sm font-extrabold card-title mb-1">
+                  ⏳ الوقت المتاح لديك <span class="text-[11px] font-normal card-subtitle">(اختياري)</span>
+                </label>
+                <input
+                  id="availableTimeInput"
+                  type="text"
+                  placeholder="مثال: 4 أيام، أو 3 ساعات يومياً"
+                  class="w-full rounded-xl px-3.5 py-2.5 text-sm input-surface border focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="pt-4 border-t panel-divider flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+              <label for="textSendTypeSelect" class="text-xs sm:text-sm font-extrabold card-title">
+                المطلوب تنفيذه:
+              </label>
+              <select id="textSendTypeSelect" class="rounded-xl px-3 py-2.5 text-xs sm:text-sm font-extrabold input-surface border cursor-pointer">
+                <option value="summary" selected>📄 ملخص شامل</option>
+                <option value="plan">🗓️ خطة مذاكرة بالتواريخ والساعات</option>
+                <option value="audio">🔊 شرح صوتي مبسط</option>
+                <option value="quiz">🏆 اختبار ذكي</option>
+              </select>
+            </div>
+
+            <button id="unifiedSubmitBtn" type="button" class="px-6 py-3 rounded-2xl text-sm font-extrabold cta-primary-btn shadow-md flex items-center justify-center gap-2 cursor-pointer">
+              <span>إرسال</span>
+              <span>🚀</span>
+            </button>
+          </div>
+
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
+            <button type="button" data-mode="summary" class="mode-quick-btn py-2 px-2.5 rounded-xl font-bold text-xs cta-primary-btn border flex items-center justify-center gap-1 cursor-pointer">
+              <span>📄</span><span>ملخص شامل</span>
+            </button>
+            <button type="button" data-mode="plan" class="mode-quick-btn py-2 px-2.5 rounded-xl font-bold text-xs cta-secondary-btn border flex items-center justify-center gap-1 cursor-pointer">
+              <span>🗓️</span><span>خطة مذاكرة</span>
+            </button>
+            <button type="button" data-mode="audio" class="mode-quick-btn py-2 px-2.5 rounded-xl font-bold text-xs cta-secondary-btn border flex items-center justify-center gap-1 cursor-pointer">
+              <span>🔊</span><span>شرح صوتي</span>
+            </button>
+            <button type="button" data-mode="quiz" class="mode-quick-btn py-2 px-2.5 rounded-xl font-bold text-xs cta-secondary-btn border flex items-center justify-center gap-1 cursor-pointer">
+              <span>🏆</span><span>اختبار ذكي</span>
+            </button>
+          </div>
+
+          <div id="quizSetupPanel" class="hidden p-4 rounded-2xl border inner-subpanel">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label for="quizCountSelect" class="block text-xs font-extrabold card-title mb-1">عدد الأسئلة:</label>
+                <select id="quizCountSelect" class="w-full rounded-xl px-3 py-2 text-sm font-bold input-surface border">
+                  <option value="5" selected>5 أسئلة</option>
+                  <option value="10">10 أسئلة</option>
+                  <option value="15">15 سؤالاً</option>
+                </select>
+              </div>
+              <div>
+                <label for="quizDifficultySelect" class="block text-xs font-extrabold card-title mb-1">مستوى الصعوبة:</label>
+                <select id="quizDifficultySelect" class="w-full rounded-xl px-3 py-2 text-sm font-bold input-surface border">
+                  <option value="سهل">سهل</option>
+                  <option value="متوسط" selected>متوسط</option>
+                  <option value="متقدم">متقدم</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- صندوق التحميل -->
+        <div id="loadingBox" class="hidden glass-panel rounded-3xl p-6 sm:p-8 border text-center space-y-3">
+          <div class="w-11 h-11 border-4 border-amber-400/30 border-t-amber-400 rounded-full animate-spin mx-auto"></div>
+          <h3 id="loadingTitle" class="text-base sm:text-lg font-extrabold card-title">جاري التجهيز...</h3>
+          <p id="loadingDesc" class="text-xs sm:text-sm card-subtitle">نحلل المحتوى ونرتب لك النتيجة بدقة.</p>
+          <button id="cancelLoadingBtn" type="button" class="px-4 py-2 rounded-xl text-xs font-bold cta-secondary-btn border cursor-pointer">
+            إلغاء الانتظار
+          </button>
+        </div>
+
+        <!-- نتيجة الخطة + بانر الاحتفال عند الإكمال -->
+        <section id="planResultSection" class="hidden glass-panel rounded-3xl p-4 sm:p-7 border space-y-5">
+          <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b panel-divider">
+            <div>
+              <span class="text-xs font-extrabold px-3 py-1 rounded-full badge-pill">جدول مذاكرة تفصيلي</span>
+              <h3 class="text-lg sm:text-2xl font-black card-title mt-1.5">خطة المذاكرة بالتواريخ والساعات</h3>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="inner-subpanel border rounded-xl px-3 py-1.5">
+                <span class="block text-[10px] card-subtitle">المدة</span>
+                <span id="planTotalDuration" class="text-xs sm:text-sm font-extrabold card-title">--</span>
+              </div>
+              <button id="resetPlanBtn" type="button" class="px-3 py-2 rounded-xl text-xs font-bold cta-secondary-btn border cursor-pointer">
+                إعادة الضبط
+              </button>
+            </div>
+          </div>
+
+          <div id="planCompletedCelebrationBanner" class="hidden rounded-2xl p-5 border-2 border-emerald-500 bg-emerald-500/15 text-center space-y-1.5">
+            <div class="text-3xl">🎉🏆✨</div>
+            <h4 class="text-base sm:text-xl font-black text-emerald-400">مبارك! أتممت خطتك الدراسية بالكامل بنجاح!</h4>
+            <p class="text-xs sm:text-sm card-title">إنجاز رائع يدل على التزامك وإصرارك؛ استمر بنفس الهمة وثق بتوفيق الله لك.</p>
+          </div>
+
+          <div class="inner-subpanel border rounded-2xl p-4 space-y-1">
+            <p id="planMentorNote" class="text-xs sm:text-sm font-bold card-title leading-relaxed"></p>
+            <p id="planPomodoroNote" class="text-xs card-subtitle"></p>
+          </div>
+
+          <div class="inner-subpanel border rounded-2xl p-3.5">
+            <div class="flex items-center justify-between text-xs sm:text-sm font-extrabold mb-2">
+              <span class="card-title">تقدمك في الخطة:</span>
+              <span id="planProgressLabel" class="card-title">0% (0 من 0)</span>
+            </div>
+            <div class="w-full h-3 rounded-full bg-slate-500/20 overflow-hidden">
+              <div id="planProgressFill" class="h-full bg-emerald-500 transition-all duration-500 rounded-full" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <div id="planScheduleList" class="space-y-3"></div>
+        </section>
+
+        <!-- نتيجة الملخص -->
+        <section id="summaryResultSection" class="hidden glass-panel rounded-3xl p-4 sm:p-7 border space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b panel-divider">
+            <div>
+              <span class="text-xs font-extrabold px-3 py-1 rounded-full badge-pill">ملخص منظم</span>
+              <h3 class="text-lg sm:text-2xl font-black card-title mt-1.5">الملخص الشامل للمحتوى</h3>
+            </div>
+            <div class="flex items-center gap-2 no-print">
+              <button id="copySummaryBtn" type="button" class="px-3.5 py-2 rounded-xl text-xs font-extrabold cta-secondary-btn border cursor-pointer">
+                📋 نسخ الملخص
+              </button>
+              <button id="printSummaryBtn" type="button" class="px-3.5 py-2 rounded-xl text-xs font-extrabold cta-primary-btn cursor-pointer">
+                🖨️ طباعة / PDF
+              </button>
+            </div>
+          </div>
+          <div id="summaryMarkdownBox" class="markdown-body inner-subpanel border rounded-2xl p-4 sm:p-6 leading-relaxed overflow-x-auto"></div>
+        </section>
+
+        <!-- نتيجة الشرح الصوتي المسموع -->
+        <section id="audioResultSection" class="hidden glass-panel rounded-3xl p-4 sm:p-7 border space-y-5">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b panel-divider">
+            <div>
+              <span class="text-xs font-extrabold px-3 py-1 rounded-full badge-pill">شرح صوتي مسموع</span>
+              <h3 class="text-lg sm:text-2xl font-black card-title mt-1.5">الشرح الصوتي بالعربية</h3>
+            </div>
+            <span id="audioLiveStatus" class="text-xs font-extrabold px-3 py-1.5 rounded-xl inner-subpanel border card-title">
+              جاهز للاستماع
+            </span>
+          </div>
+
+          <div class="inner-subpanel border rounded-2xl p-4 space-y-3">
+            <audio id="lessonAudioPlayer" class="w-full rounded-xl" controls></audio>
+
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="flex flex-wrap items-center gap-2">
+                <button id="playAudioBtn" type="button" class="px-4 py-2 rounded-xl text-xs font-extrabold cta-primary-btn cursor-pointer">
+                  ▶️ تشغيل
+                </button>
+                <button id="pauseAudioBtn" type="button" class="px-4 py-2 rounded-xl text-xs font-bold cta-secondary-btn border cursor-pointer">
+                  ⏸️ إيقاف مؤقت
+                </button>
+                <button id="restartAudioBtn" type="button" class="px-4 py-2 rounded-xl text-xs font-bold cta-secondary-btn border cursor-pointer">
+                  🔁 إعادة
+                </button>
+              </div>
+
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs font-extrabold card-title">السرعة:</span>
+                <div class="inline-flex rounded-xl p-1 border inner-subpanel">
+                  <button type="button" data-speed="0.75" class="speed-opt px-2 py-1 rounded-lg text-xs font-bold cursor-pointer">0.75x</button>
+                  <button type="button" data-speed="1" class="speed-opt active-speed px-2 py-1 rounded-lg text-xs font-bold cursor-pointer">1x</button>
+                  <button type="button" data-speed="1.25" class="speed-opt px-2 py-1 rounded-lg text-xs font-bold cursor-pointer">1.25x</button>
+                  <button type="button" data-speed="1.5" class="speed-opt px-2 py-1 rounded-lg text-xs font-bold cursor-pointer">1.5x</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="inner-subpanel border rounded-2xl p-4">
+            <h4 class="text-xs font-extrabold card-subtitle mb-2">📝 نص الشرح الصوتي:</h4>
+            <div id="audioTranscriptDisplay" class="text-xs sm:text-sm leading-loose card-title whitespace-pre-line max-h-64 overflow-y-auto pl-2"></div>
+          </div>
+
+          <div class="inner-subpanel border rounded-2xl p-4 space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 class="text-sm font-extrabold card-title">💬 اسأل أثناء الشرح الصوتي</h4>
+                <p class="text-xs card-subtitle">اكتب سؤالك وسيتوقف الشرح ويرد عليك صوتياً ونصياً.</p>
+              </div>
+              <button id="resumeLessonAfterQaBtn" type="button" class="hidden px-3 py-1.5 rounded-xl text-xs font-extrabold cta-primary-btn cursor-pointer">
+                استكمال شرح الدرس ▶️
+              </button>
+            </div>
+
+            <div id="liveAudioChatMessages" class="space-y-2.5 max-h-56 overflow-y-auto p-3 rounded-xl border panel-divider">
+              <p class="text-xs card-subtitle text-center py-1">اكتب سؤالك بالأسفل متى ما احتجت لتوضيح نقطة.</p>
+            </div>
+
+            <form id="audioQuestionForm" class="flex items-center gap-2">
+              <input id="audioQuestionInput" type="text" placeholder="اكتب سؤالك هنا..." class="flex-1 rounded-xl px-3.5 py-2.5 text-sm input-surface border focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              <button type="submit" class="px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold cta-primary-btn cursor-pointer shrink-0">
+                إرسال 🚀
+              </button>
+            </form>
+          </div>
+        </section>
+
+        <!-- نتيجة الاختبار -->
+        <section id="quizResultSection" class="hidden glass-panel rounded-3xl p-4 sm:p-7 border space-y-5">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b panel-divider">
+            <div>
+              <span class="text-xs font-extrabold px-3 py-1 rounded-full badge-pill">اختبار تفاعلي</span>
+              <h3 id="quizHeadingTitle" class="text-lg sm:text-2xl font-black card-title mt-1.5">الاختبار التفاعلي</h3>
+            </div>
+            <span id="quizProgressBadge" class="text-xs font-extrabold px-3.5 py-1.5 rounded-xl inner-subpanel border card-title">
+              أجبت على 0 من 0
+            </span>
+          </div>
+
+          <div id="quizScoreBanner" class="hidden rounded-2xl p-5 border-2 text-center space-y-1.5">
+            <div id="quizScoreValue" class="inline-block text-2xl sm:text-3xl font-black px-5 py-1.5 rounded-2xl mb-1"></div>
+            <h4 id="quizEncouragementTitle" class="text-base sm:text-xl font-black"></h4>
+            <p id="quizEncouragementBody" class="text-xs sm:text-sm max-w-2xl mx-auto leading-relaxed"></p>
+          </div>
+
+          <div id="quizQuestionsList" class="space-y-4"></div>
+
+          <div id="quizSubmitBar" class="pt-3 border-t panel-divider flex flex-col sm:flex-row items-center justify-between gap-3">
+            <p class="text-xs font-bold card-subtitle">أجب عن جميع الأسئلة أولاً ثم اضغط إرسال التصحيح.</p>
+            <button id="submitQuizAnswersBtn" type="button" class="w-full sm:w-auto px-6 py-3 rounded-2xl text-sm font-extrabold cta-primary-btn shadow-md cursor-pointer">
+              إرسال التصحيح 🚀
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <!-- الصفحة 2: عقلية هادئة -->
+      <div id="page-calm-mind" class="app-page-view hidden space-y-6">
+        <section class="glass-panel rounded-3xl p-5 sm:p-8 border space-y-5">
+          <div class="pb-4 border-b panel-divider space-y-2">
+            <span class="text-xs font-extrabold px-3 py-1 rounded-full badge-pill">🌿 عقلية هادئة</span>
+            <h2 class="text-xl sm:text-3xl font-black card-title">مساحتك الدافئة لترتيب أفكارك وتجديد طاقتك</h2>
+            <p class="text-xs sm:text-sm card-subtitle leading-relaxed max-w-3xl">
+              ركن هادئ للحوار المفتوح مع رفيقك الذكي؛ شاركه ما يشغل بالك من ضغط الدراسة أو التشتت لتجد احتواءً لطيفاً، وكلمات مطمئنة تبعث على الصبر واليقين، وخطوات عملية بسيطة تعيد إليك توازنك.
+            </p>
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            <button type="button" class="calm-prompt-chip px-3 py-2 rounded-xl text-xs font-bold cta-secondary-btn border cursor-pointer" data-msg="أشعر بضغط شديد وتراكم الدروس وخائف ألا ألحق بالامتحانات">
+              😰 تراكم الدروس والخوف من الامتحان
+            </button>
+            <button type="button" class="calm-prompt-chip px-3 py-2 rounded-xl text-xs font-bold cta-secondary-btn border cursor-pointer" data-msg="أشعر بالإحباط وفقدان الشغف ولا أستطيع التركيز في المذاكرة">
+              😔 فقدان الشغف وصعوبة التركيز
+            </button>
+            <button type="button" class="calm-prompt-chip px-3 py-2 rounded-xl text-xs font-bold cta-secondary-btn border cursor-pointer" data-msg="بذلت مجهوداً كبيراً وأخاف ألا أوفق في النتيجة">
+              🤲 القلق من النتيجة بعد الاجتهاد
+            </button>
+          </div>
+
+          <div id="calmChatFeed" class="inner-subpanel border rounded-2xl p-4 sm:p-5 space-y-3.5 min-h-72 max-h-[28rem] overflow-y-auto">
+            <div class="rounded-2xl p-4 border panel-divider space-y-1.5">
+              <div class="text-xs font-extrabold badge-pill inline-block px-3 py-0.5 rounded-full">رفيق عقلية هادئة 🌿</div>
+              <p class="text-xs sm:text-sm card-title leading-relaxed">
+                أهلاً بك في ركن «عقلية هادئة».. خذ نفساً عميقاً واطمئن. مهما ثقلت عليك الدروس أو اشتد عليك التوتر، خطوة واحدة هادئة كفيلة بتغيير المسار. أخبرني بما يدور في ذهنك الآن وسنرتبه معاً.
+              </p>
+            </div>
+          </div>
+
+          <form id="calmChatForm" class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+            <input
+              id="calmMessageInput"
+              type="text"
+              required
+              placeholder="اكتب ما تشعر به أو ما يقلقك هنا..."
+              class="flex-1 rounded-2xl px-4 py-3 text-sm input-surface border focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+            <button type="submit" class="px-6 py-3 rounded-2xl text-sm font-extrabold cta-primary-btn cursor-pointer shrink-0">
+              إرسال ✨
+            </button>
+          </form>
+        </section>
+      </div>
+
+      <!-- الصفحة 3: بومودورو وستوب واتش -->
+      <div id="page-pomodoro" class="app-page-view hidden space-y-6">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          <section class="glass-panel rounded-3xl p-5 sm:p-7 border space-y-5">
+            <div class="pb-3 border-b panel-divider">
+              <span class="text-xs font-extrabold px-3 py-1 rounded-full badge-pill">🍅 مؤقت بومودورو</span>
+              <h2 class="text-lg sm:text-2xl font-black card-title mt-1.5">حدّد وقت مذاكرتك واستراحتك</h2>
+            </div>
+
+            <div class="space-y-2">
+              <span class="block text-xs font-extrabold card-subtitle">أوقات مقترحة في الموقع:</span>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" class="pomo-preset-btn px-3 py-1.5 rounded-xl text-xs font-bold cta-secondary-btn border cursor-pointer" data-focus="25" data-break="5">
+                  25 د / 5 د راحة
+                </button>
+                <button type="button" class="pomo-preset-btn px-3 py-1.5 rounded-xl text-xs font-bold cta-secondary-btn border cursor-pointer" data-focus="45" data-break="10">
+                  45 د / 10 د راحة
+                </button>
+                <button type="button" class="pomo-preset-btn px-3 py-1.5 rounded-xl text-xs font-bold cta-secondary-btn border cursor-pointer" data-focus="15" data-break="3">
+                  15 د / 3 د راحة
+                </button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-bold card-subtitle mb-1">مدة المذاكرة (دقيقة):</label>
+                <input id="customFocusMinutes" type="number" min="1" max="180" value="25" class="w-full rounded-xl px-3 py-2 text-sm font-bold input-surface border" />
+              </div>
+              <div>
+                <label class="block text-xs font-bold card-subtitle mb-1">مدة الراحة (دقيقة):</label>
+                <input id="customBreakMinutes" type="number" min="1" max="60" value="5" class="w-full rounded-xl px-3 py-2 text-sm font-bold input-surface border" />
+              </div>
+            </div>
+
+            <div class="inner-subpanel border rounded-3xl p-5 text-center space-y-1.5">
+              <span id="pomoPhaseLabel" class="text-xs font-extrabold px-3 py-1 rounded-full badge-pill">جلسة مذاكرة مركّزة</span>
+              <div id="pomoTimerDisplay" class="text-5xl sm:text-6xl font-black card-title tracking-wider py-2" dir="ltr">
+                25:00
+              </div>
+              <p id="pomoSessionsCounter" class="text-xs font-bold card-subtitle">الجلسات المكتملة: 0</p>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-center gap-2.5">
+              <button id="pomoStartBtn" type="button" class="px-5 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold cta-primary-btn cursor-pointer">
+                ▶️ ابدأ
+              </button>
+              <button id="pomoPauseBtn" type="button" class="px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold cta-secondary-btn border cursor-pointer">
+                ⏸️ إيقاف مؤقت
+              </button>
+              <button id="pomoResetBtn" type="button" class="px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold cta-secondary-btn border cursor-pointer">
+                🔄 ضبط الوقت
+              </button>
+            </div>
+          </section>
+
+          <section class="glass-panel rounded-3xl p-5 sm:p-7 border space-y-5 flex flex-col justify-between">
+            <div class="pb-3 border-b panel-divider">
+              <span class="text-xs font-extrabold px-3 py-1 rounded-full badge-pill">⏱️ ستوب واتش</span>
+              <h2 class="text-lg sm:text-2xl font-black card-title mt-1.5">احسب وقتك الفعلي في المذاكرة</h2>
+            </div>
+
+            <div class="inner-subpanel border rounded-3xl p-6 text-center space-y-1.5 my-auto">
+              <span class="text-xs font-bold card-subtitle">الوقت المنقضي</span>
+              <div id="stopwatchDisplay" class="text-4xl sm:text-6xl font-black card-title tracking-wider py-2" dir="ltr">
+                00:00:00
+              </div>
+            </div>
+
+            <div class="space-y-3">
+              <div class="flex flex-wrap items-center justify-center gap-2">
+                <button id="swStartBtn" type="button" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold cta-primary-btn cursor-pointer">
+                  ▶️ تشغيل
+                </button>
+                <button id="swPauseBtn" type="button" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-bold cta-secondary-btn border cursor-pointer">
+                  ⏸️ إيقاف
+                </button>
+                <button id="swLapBtn" type="button" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-bold cta-secondary-btn border cursor-pointer">
+                  🚩 دورة
+                </button>
+                <button id="swResetBtn" type="button" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-bold cta-secondary-btn border cursor-pointer">
+                  🔄 تصفير
+                </button>
+              </div>
+              <div id="swLapsList" class="space-y-1.5 max-h-32 overflow-y-auto"></div>
+            </div>
+          </section>
+
+        </div>
+      </div>
+
+      <!-- الصفحة 4: حسابي وسجلي -->
+      <div id="page-account" class="app-page-view hidden space-y-6">
+        <section class="glass-panel rounded-3xl p-5 sm:p-8 border space-y-5 max-w-2xl mx-auto">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b panel-divider">
+            <div>
+              <span class="text-xs font-extrabold px-3 py-1 rounded-full badge-pill">🔐 حسابي وسجلي</span>
+              <h2 id="accountAuthHeading" class="text-lg sm:text-2xl font-black card-title mt-1.5">تسجيل الدخول إلى حسابك</h2>
+            </div>
+            <button id="logoutAccountBtn" type="button" class="hidden px-3.5 py-2 rounded-xl text-xs font-extrabold cta-secondary-btn border cursor-pointer">
+              تسجيل الخروج
+            </button>
+          </div>
+
+          <div id="authFormsBox" class="space-y-4">
+
+            <!-- 1. تسجيل الدخول -->
+            <form id="loginAccountForm" class="inner-subpanel border rounded-2xl p-5 space-y-4">
+              <div>
+                <label class="block text-xs font-bold card-subtitle mb-1">البريد الإلكتروني المسجل:</label>
+                <input id="loginEmailInput" type="email" required placeholder="student@gmail.com" class="w-full rounded-xl px-3.5 py-2.5 text-sm input-surface border" dir="ltr" />
+              </div>
+              <div>
+                <label class="block text-xs font-bold card-subtitle mb-1">كلمة المرور:</label>
+                <input id="loginPasswordInput" type="password" required placeholder="••••••••" class="w-full rounded-xl px-3.5 py-2.5 text-sm input-surface border" />
+              </div>
+
+              <div class="flex items-center gap-2">
+                <button id="sendLoginCodeBtn" type="button" class="px-3.5 py-2.5 rounded-xl text-xs font-extrabold cta-secondary-btn border cursor-pointer shrink-0">
+                  📩 إرسال رمز للإيميل
+                </button>
+                <input id="loginVerifyCodeInput" type="text" maxlength="6" required placeholder="رمز التحقق (6 أرقام)" class="w-full rounded-xl px-3 py-2.5 text-sm input-surface border text-center font-bold" />
+              </div>
+              <p id="loginCodeHint" class="hidden text-xs font-bold text-amber-400 bg-amber-500/10 p-3 rounded-xl border border-amber-400/30 leading-relaxed"></p>
+
+              <button type="submit" class="w-full py-3 rounded-xl text-sm font-extrabold cta-primary-btn cursor-pointer">
+                تسجيل الدخول
+              </button>
+
+              <div class="pt-2 border-t panel-divider text-center">
+                <a href="#register" id="switchToRegisterLink" class="text-xs sm:text-sm font-extrabold text-amber-400 hover:underline">
+                  ليس لديك حساب في قاعدة البيانات؟ أنشئ حساباً جديداً الآن
+                </a>
+              </div>
+            </form>
+
+            <!-- 2. إنشاء حساب جديد -->
+            <form id="registerAccountForm" class="hidden inner-subpanel border rounded-2xl p-5 space-y-4">
+              <div>
+                <label class="block text-xs font-bold card-subtitle mb-1">الاسم الكامل:</label>
+                <input id="regFullNameInput" type="text" required placeholder="اكتب اسمك الكامل" class="w-full rounded-xl px-3.5 py-2.5 text-sm input-surface border" />
+              </div>
+              <div>
+                <label class="block text-xs font-bold card-subtitle mb-1">البريد الإلكتروني الصحيح:</label>
+                <input id="regEmailInput" type="email" required placeholder="student@gmail.com" class="w-full rounded-xl px-3.5 py-2.5 text-sm input-surface border" dir="ltr" />
+              </div>
+              <div>
+                <label class="block text-xs font-bold card-subtitle mb-1">كلمة المرور (6 أحرف على الأقل):</label>
+                <input id="regPasswordInput" type="password" minlength="6" required placeholder="••••••••" class="w-full rounded-xl px-3.5 py-2.5 text-sm input-surface border" />
+              </div>
+
+              <div class="flex items-center gap-2">
+                <button id="sendRegCodeBtn" type="button" class="px-3.5 py-2.5 rounded-xl text-xs font-extrabold cta-secondary-btn border cursor-pointer shrink-0">
+                  📩 إرسال رمز للإيميل
+                </button>
+                <input id="regVerifyCodeInput" type="text" maxlength="6" required placeholder="رمز التحقق (6 أرقام)" class="w-full rounded-xl px-3 py-2.5 text-sm input-surface border text-center font-bold" />
+              </div>
+              <p id="regCodeHint" class="hidden text-xs font-bold text-amber-400 bg-amber-500/10 p-3 rounded-xl border border-amber-400/30 leading-relaxed"></p>
+
+              <button type="submit" class="w-full py-3 rounded-xl text-sm font-extrabold cta-primary-btn cursor-pointer">
+                تأكيد البريد وإنشاء الحساب
+              </button>
+
+              <div class="pt-2 border-t panel-divider text-center">
+                <a href="#login" id="switchToLoginLink" class="text-xs sm:text-sm font-extrabold text-amber-400 hover:underline">
+                  لديك حساب مسجل بالفعل؟ الانتقال إلى تسجيل الدخول
+                </a>
+              </div>
+            </form>
+
+          </div>
+
+          <!-- لوحة المستخدم وسجلّه من قاعدة البيانات -->
+          <div id="loggedInHistoryBox" class="hidden space-y-4">
+            <div class="inner-subpanel border rounded-2xl p-4 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p class="text-sm sm:text-base font-extrabold card-title">أهلاً بك، <span id="activeUserDisplayName"></span> 👋</p>
+                <p id="activeUserEmailDisplay" class="text-xs card-subtitle"></p>
+              </div>
+              <span id="savedRecordsCountBadge" class="text-xs font-extrabold px-3 py-1 rounded-xl badge-pill">0 عناصر محفوظة</span>
+            </div>
+
+            <div id="savedHistoryList" class="grid grid-cols-1 gap-3.5"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- الصفحة 5: عنّا -->
+      <div id="page-about" class="app-page-view hidden space-y-6">
+        <section class="glass-panel rounded-3xl p-5 sm:p-7 border space-y-5">
+          <div class="pb-3 border-b panel-divider space-y-1.5">
+            <span class="text-xs font-extrabold px-3 py-1 rounded-full badge-pill">🎬 عنّا</span>
+            <h2 class="text-xl sm:text-3xl font-black card-title">عن منصة نظّملي وكيفية تحقيق أعلى استفادة</h2>
+            <p class="text-xs sm:text-sm card-subtitle leading-relaxed">
+              تعرّف على طريقة استخدام كل أداة في المنصة لتنظيم وقتك وتلخيص كتبك ومراجعة دروسك بأعلى كفاءة.
+            </p>
+          </div>
+
+          <div class="inner-subpanel border rounded-2xl p-4 sm:p-5 space-y-3.5">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <h3 class="text-sm sm:text-base font-extrabold card-title">🎥 فيديو شرح المنصة</h3>
+              <div class="flex items-center gap-2">
+                <input
+                  id="aboutVideoUrlInput"
+                  type="text"
+                  placeholder="ضع رابط فيديو YouTube أو مسار MP4..."
+                  class="rounded-xl px-3 py-2 text-xs input-surface border w-full sm:w-64"
+                  dir="ltr"
+                />
+                <button id="saveAboutVideoBtn" type="button" class="px-3.5 py-2 rounded-xl text-xs font-extrabold cta-primary-btn cursor-pointer shrink-0">
+                  إضافة الفيديو
+                </button>
+              </div>
+            </div>
+
+            <div id="aboutVideoContainer" class="w-full aspect-video rounded-2xl overflow-hidden border panel-divider bg-slate-950/60 flex items-center justify-center">
+              <div class="text-center p-5 space-y-1.5">
+                <span class="text-3xl block">🎬</span>
+                <p class="text-sm font-extrabold card-title">مساحة الفيديو التعريفي للمنصة</p>
+                <p class="text-xs card-subtitle">ألصق رابط الفيديو في الخانة بالأعلى واضغط «إضافة الفيديو».</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="inner-subpanel border rounded-2xl p-4 space-y-1.5">
+              <span class="text-xs font-black px-2.5 py-0.5 rounded-lg badge-pill">1</span>
+              <h4 class="text-sm sm:text-base font-extrabold card-title">لخّص كتبك أو جدولها</h4>
+              <p class="text-xs card-subtitle leading-relaxed">ارفع ملفات PDF أو صور الصفحات للحصول على ملخص شامل أو خطة مذاكرة بالتواريخ.</p>
+            </div>
+            <div class="inner-subpanel border rounded-2xl p-4 space-y-1.5">
+              <span class="text-xs font-black px-2.5 py-0.5 rounded-lg badge-pill">2</span>
+              <h4 class="text-sm sm:text-base font-extrabold card-title">استمع واختبر نفسك</h4>
+              <p class="text-xs card-subtitle leading-relaxed">استخدم الشرح الصوتي للمراجعة السمعية والاختبار الذكي لقياس مستواك وتصحيح أخطائك.</p>
+            </div>
+            <div class="inner-subpanel border rounded-2xl p-4 space-y-1.5">
+              <span class="text-xs font-black px-2.5 py-0.5 rounded-lg badge-pill">3</span>
+              <h4 class="text-sm sm:text-base font-extrabold card-title">حافظ على تركيزك وهدوئك</h4>
+              <p class="text-xs card-subtitle leading-relaxed">اضبط مؤقت بومودورو لزيادة تركيزك وزر ركن «عقلية هادئة» كلما احتجت لدعم وتجديد نشاطك.</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>

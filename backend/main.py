@@ -1,0 +1,826 @@
+﻿import os
+import json
+import re
+import io
+import base64
+import random
+import hashlib
+import sqlite3
+import smtplib
+import asyncio
+from datetime import datetime, timedelta
+from email.mime.text import MIMEText
+from typing import List, Optional
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+from pypdf import PdfReader
+from google import genai
+from google.genai import types
+
+try:
+    from gtts import gTTS
+    HAS_GTTS = True
+except ImportError:
+    HAS_GTTS = False
+
+load_dotenv()
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+MODEL_ID = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+FALLBACK_MODELS = [
+    x.strip()
+    for x in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash,gemini-2.0-flash").split(",")
+    if x.strip()
+]
+
+app = FastAPI(title="Nazamly Platform API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend"))
+DB_PATH = (
+    "/tmp/nazamly.db"
+    if (os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+    else os.path.join(BASE_DIR, "nazamly.db")
+)
+
+if os.path.exists(FRONTEND_DIR):
+    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS verification_codes (
+            email TEXT PRIMARY KEY,
+            code TEXT NOT NULL,
+            purpose TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_email TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+init_db()
+
+
+def hash_password(raw_pw: str) -> str:
+    return hashlib.sha256(raw_pw.encode("utf-8")).hexdigest()
+
+
+def is_valid_email_format(email: str) -> bool:
+    if not email or " " in email or len(email) > 120:
+        return False
+    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    if not re.match(pattern, email):
+        return False
+    domain = email.split("@")[1]
+    if ".." in domain or domain.startswith(".") or domain.endswith("."):
+        return False
+    return True
+
+
+def dispatch_email_code(email: str, code: str) -> bool:
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_pass = os.getenv("SMTP_PASS", "").strip()
+
+    if not smtp_user or not smtp_pass:
+        print("[SMTP WARNING] SMTP_USER أو SMTP_PASS غير مضبوط في ملف .env.")
+        return False
+
+    try:
+        msg = MIMEText(
+            f"مرحباً بك في منصة نظّملي،\n\nرمز التحقق الخاص بك هو: {code}\n\nصلاحية الرمز 10 دقائق.",
+            "plain",
+            "utf-8",
+        )
+        msg["Subject"] = "رمز التحقق — منصة نظّملي"
+        msg["From"] = smtp_user
+        msg["To"] = email
+
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=12) as server:
+            server.ehlo()
+            if smtp_port == 587:
+                server.starttls()
+                server.ehlo()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+        return True
+    except Exception as exc:
+        print(f"[SMTP ERROR] فشل إرسال البريد إلى {email} عبر {smtp_host}:{smtp_port} -> {exc}")
+        return False
+
+
+@app.post("/api/auth/request-register-code")
+async def request_register_code(
+    full_name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+):
+    clean_name = full_name.strip()
+    clean_email = email.strip().lower()
+
+    if len(clean_name) < 2:
+        raise HTTPException(status_code=400, detail="يرجى إدخال الاسم الكامل بشكل صحيح.")
+    if not is_valid_email_format(clean_email):
+        raise HTTPException(status_code=400, detail="صيغة البريد الإلكتروني غير صحيحة (مثال: student@gmail.com).")
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="يجب أن تتكون كلمة المرور من 6 أحرف على الأقل.")
+
+    conn = get_db()
+    existing = conn.execute("SELECT id FROM users WHERE email = ?", (clean_email,)).fetchone()
+    if existing:
+        conn.close()
+        raise HTTPException(status_code=400, detail="هذا البريد الإلكتروني مسجل بالفعل في قاعدة البيانات؛ انتقل إلى تسجيل الدخول.")
+
+    code = f"{random.randint(100000, 999999)}"
+    expires = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
+    conn.execute(
+        "REPLACE INTO verification_codes (email, code, purpose, expires_at) VALUES (?, ?, ?, ?)",
+        (clean_email, code, "register", expires),
+    )
+    conn.commit()
+    conn.close()
+
+    sent_real = dispatch_email_code(clean_email, code)
+    return {
+        "success": True,
+        "sent_via_email": sent_real,
+        "dev_code": "" if sent_real else code,
+        "message": (
+            f"تم إرسال رمز التحقق إلى بريدك الإلكتروني ({clean_email})."
+            if sent_real
+            else f"تعذر الإرسال عبر SMTP (راجع Console) — رمز التحقق المؤقت هو: {code}"
+        ),
+    }
+
+
+@app.post("/api/auth/verify-register")
+async def verify_register(
+    full_name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    code: str = Form(...),
+):
+    clean_name = full_name.strip()
+    clean_email = email.strip().lower()
+    clean_code = code.strip()
+
+    if not is_valid_email_format(clean_email):
+        raise HTTPException(status_code=400, detail="صيغة البريد الإلكتروني غير صحيحة.")
+
+    conn = get_db()
+    row = conn.execute(
+        "SELECT code, expires_at FROM verification_codes WHERE email = ? AND purpose = 'register'",
+        (clean_email,),
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=400, detail="اضغط على (إرسال رمز التحقق) أولاً.")
+    if datetime.utcnow() > datetime.fromisoformat(row["expires_at"]):
+        conn.close()
+        raise HTTPException(status_code=400, detail="انتهت صلاحية الرمز؛ اطلب رمزاً جديداً.")
+    if row["code"] != clean_code:
+        conn.close()
+        raise HTTPException(status_code=400, detail="رمز التحقق غير صحيح.")
+
+    try:
+        conn.execute(
+            "INSERT INTO users (full_name, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+            (clean_name, clean_email, hash_password(password), datetime.now().strftime("%Y-%m-%d %H:%M")),
+        )
+        conn.execute("DELETE FROM verification_codes WHERE email = ?", (clean_email,))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        raise HTTPException(status_code=400, detail="هذا البريد مسجل مسبقاً.")
+
+    conn.close()
+    return {
+        "success": True,
+        "user": {"full_name": clean_name, "email": clean_email},
+    }
+
+
+@app.post("/api/auth/request-login-code")
+async def request_login_code(
+    email: str = Form(...),
+    password: str = Form(...),
+):
+    clean_email = email.strip().lower()
+    if not is_valid_email_format(clean_email):
+        raise HTTPException(status_code=400, detail="صيغة البريد الإلكتروني غير صحيحة.")
+
+    conn = get_db()
+    user = conn.execute(
+        "SELECT full_name, password_hash FROM users WHERE email = ?",
+        (clean_email,),
+    ).fetchone()
+
+    if not user:
+        conn.close()
+        raise HTTPException(
+            status_code=404,
+            detail="هذا البريد الإلكتروني غير موجود في قاعدة البيانات؛ يرجى إنشاء حساب جديد أولاً.",
+        )
+
+    if user["password_hash"] != hash_password(password):
+        conn.close()
+        raise HTTPException(status_code=401, detail="كلمة المرور غير صحيحة.")
+
+    code = f"{random.randint(100000, 999999)}"
+    expires = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
+    conn.execute(
+        "REPLACE INTO verification_codes (email, code, purpose, expires_at) VALUES (?, ?, ?, ?)",
+        (clean_email, code, "login", expires),
+    )
+    conn.commit()
+    conn.close()
+
+    sent_real = dispatch_email_code(clean_email, code)
+    return {
+        "success": True,
+        "sent_via_email": sent_real,
+        "dev_code": "" if sent_real else code,
+        "message": (
+            f"تم التحقق من حسابك وإرسال رمز الدخول إلى ({clean_email})."
+            if sent_real
+            else f"تعذر الإرسال عبر SMTP (راجع Console) — رمز الدخول المؤقت هو: {code}"
+        ),
+    }
+
+
+@app.post("/api/auth/verify-login")
+async def verify_login(
+    email: str = Form(...),
+    code: str = Form(...),
+):
+    clean_email = email.strip().lower()
+    clean_code = code.strip()
+
+    conn = get_db()
+    user = conn.execute(
+        "SELECT full_name, email FROM users WHERE email = ?",
+        (clean_email,),
+    ).fetchone()
+    if not user:
+        conn.close()
+        raise HTTPException(status_code=404, detail="الحساب غير موجود في قاعدة البيانات.")
+
+    row = conn.execute(
+        "SELECT code, expires_at FROM verification_codes WHERE email = ? AND purpose = 'login'",
+        (clean_email,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=400, detail="اطلب إرسال رمز الدخول أولاً.")
+    if datetime.utcnow() > datetime.fromisoformat(row["expires_at"]):
+        conn.close()
+        raise HTTPException(status_code=400, detail="انتهت صلاحية الرمز؛ اطلب رمزاً جديداً.")
+    if row["code"] != clean_code:
+        conn.close()
+        raise HTTPException(status_code=400, detail="رمز التحقق غير صحيح.")
+
+    conn.execute("DELETE FROM verification_codes WHERE email = ?", (clean_email,))
+    conn.commit()
+    conn.close()
+
+    return {
+        "success": True,
+        "user": {"full_name": user["full_name"], "email": user["email"]},
+    }
+
+
+@app.post("/api/history/save")
+async def save_history_item(
+    email: str = Form(...),
+    item_type: str = Form(...),
+    title: str = Form(...),
+    payload_json: str = Form(...),
+):
+    clean_email = email.strip().lower()
+    conn = get_db()
+    user = conn.execute("SELECT id FROM users WHERE email = ?", (clean_email,)).fetchone()
+    if not user:
+        conn.close()
+        raise HTTPException(status_code=404, detail="المستخدم غير موجود.")
+
+    conn.execute(
+        "INSERT INTO user_history (user_email, item_type, title, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
+        (clean_email, item_type, title, payload_json, datetime.now().strftime("%Y-%m-%d %H:%M")),
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
+
+@app.get("/api/history/list")
+async def list_history_items(email: str):
+    clean_email = email.strip().lower()
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, item_type, title, payload_json, created_at FROM user_history WHERE user_email = ? ORDER BY id DESC LIMIT 50",
+        (clean_email,),
+    ).fetchall()
+    conn.close()
+    items = [
+        {
+            "id": r["id"],
+            "type": r["item_type"],
+            "title": r["title"],
+            "createdAt": r["created_at"],
+            "payload": json.loads(r["payload_json"]),
+        }
+        for r in rows
+    ]
+    return {"success": True, "items": items}
+
+
+@app.post("/api/history/delete")
+async def delete_history_item(email: str = Form(...), item_id: int = Form(...)):
+    clean_email = email.strip().lower()
+    conn = get_db()
+    conn.execute("DELETE FROM user_history WHERE id = ? AND user_email = ?", (item_id, clean_email))
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
+
+@app.get("/logo.png", include_in_schema=False)
+async def serve_logo():
+    for folder in (FRONTEND_DIR, BASE_DIR):
+        path = os.path.join(folder, "logo.png")
+        if os.path.exists(path):
+            return FileResponse(path)
+    raise HTTPException(status_code=404, detail="logo.png غير موجود.")
+
+
+@app.get("/api/health")
+async def health():
+    return {"success": True, "gemini_configured": client is not None, "model": MODEL_ID}
+
+
+@app.get("/")
+async def serve_home():
+    index_path = os.path.join(FRONTEND_DIR, "index.html")
+    if not os.path.exists(index_path):
+        raise HTTPException(status_code=404, detail="ملف index.html غير موجود.")
+    return FileResponse(index_path)
+
+
+def ensure_client():
+    if not client:
+        raise HTTPException(
+            status_code=500,
+            detail="مفتاح GEMINI_API_KEY غير مضبوط في ملف .env داخل مجلد backend.",
+        )
+
+
+def _status_of(exc: Exception) -> int:
+    for attr in ("code", "status_code"):
+        val = getattr(exc, attr, None)
+        if isinstance(val, int):
+            return val
+    text = str(exc)
+    for code in (429, 503, 500, 404, 400, 401, 403):
+        if re.search(rf"\b{code}\b", text):
+            return code
+    return 0
+
+
+def friendly_ai_error(exc: Exception) -> tuple[int, str]:
+    code = _status_of(exc)
+    if code == 429:
+        return 429, "تم تجاوز حد الاستخدام المجاني لـ Gemini مؤقتاً؛ انتظر دقيقة ثم حاول مرة أخرى."
+    if code in (500, 503):
+        return 503, "خدمة Gemini مزدحمة أو غير متاحة حالياً؛ حاول مرة أخرى بعد قليل."
+    if code == 404:
+        return 502, "اسم نموذج Gemini غير صحيح أو غير متاح لحسابك؛ اضبط GEMINI_MODEL في ملف .env."
+    if code in (401, 403):
+        return 502, "مفتاح GEMINI_API_KEY غير صالح أو لا يملك صلاحية؛ تحقق منه في ملف .env."
+    return 502, f"تعذر الاتصال بخدمة Gemini: {str(exc)[:200]}"
+
+
+async def gemini_generate(contents, config=None, retries: int = 2):
+    models = [MODEL_ID] + [m for m in FALLBACK_MODELS if m != MODEL_ID]
+    last_exc: Optional[Exception] = None
+
+    for model_name in models:
+        for attempt in range(retries):
+            try:
+                kwargs = {"model": model_name, "contents": contents}
+                if config is not None:
+                    kwargs["config"] = config
+                return await client.aio.models.generate_content(**kwargs)
+            except Exception as exc:
+                last_exc = exc
+                print(f"[GEMINI ERROR] model={model_name} attempt={attempt+1}: {exc}")
+                code = _status_of(exc)
+                if code in (400, 401, 403):
+                    raise
+                if code == 404:
+                    break
+                if code in (429, 500, 503) and attempt < retries - 1:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
+                if code in (429, 500, 503):
+                    break
+                raise
+    raise last_exc if last_exc else RuntimeError("فشل استدعاء Gemini.")
+
+
+def extract_json_clean(raw: str) -> dict:
+    cleaned = raw.strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        cleaned = cleaned[start : end + 1]
+    return json.loads(cleaned)
+
+
+def synthesize_arabic_mp3_base64(text: str) -> str:
+    if not HAS_GTTS:
+        return ""
+    clean_for_tts = re.sub(r"[#*`_~•\-]+", " ", text).strip()
+    if not clean_for_tts:
+        return ""
+    try:
+        tts = gTTS(text=clean_for_tts[:3500], lang="ar", slow=False)
+        mp3_fp = io.BytesIO()
+        tts.write_to_fp(mp3_fp)
+        mp3_fp.seek(0)
+        return base64.b64encode(mp3_fp.read()).decode("utf-8")
+    except Exception:
+        return ""
+
+
+async def collect_multimodal_inputs(
+    text_content: str, files: Optional[List[UploadFile]]
+) -> tuple[str, list]:
+    combined_texts = []
+    if text_content and text_content.strip():
+        combined_texts.append(text_content.strip())
+
+    media_parts = []
+    if files:
+        for f in files:
+            if not f or not f.filename:
+                continue
+            raw_bytes = await f.read()
+            if not raw_bytes:
+                continue
+
+            fname = f.filename.lower()
+            ctype = (f.content_type or "").lower()
+
+            if fname.endswith(".txt") or "text/plain" in ctype:
+                try:
+                    decoded = raw_bytes.decode("utf-8", errors="ignore").strip()
+                    if decoded:
+                        combined_texts.append(f"--- محتوى ملف {f.filename} ---\n{decoded}")
+                except Exception:
+                    pass
+
+            elif fname.endswith(".pdf") or "application/pdf" in ctype:
+                extracted_pages = []
+                try:
+                    reader = PdfReader(io.BytesIO(raw_bytes))
+                    for idx, page in enumerate(reader.pages):
+                        p_txt = (page.extract_text() or "").strip()
+                        if p_txt:
+                            extracted_pages.append(f"[صفحة {idx + 1}]\n{p_txt}")
+                except Exception:
+                    extracted_pages = []
+
+                full_pdf_text = "\n\n".join(extracted_pages).strip()
+                if len(full_pdf_text) >= 100:
+                    combined_texts.append(f"--- محتوى PDF ({f.filename}) ---\n{full_pdf_text}")
+                else:
+                    media_parts.append(
+                        types.Part.from_bytes(data=raw_bytes, mime_type="application/pdf")
+                    )
+
+            elif any(fname.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")) or ctype.startswith("image/"):
+                mime = ctype if ctype.startswith("image/") else "image/jpeg"
+                media_parts.append(types.Part.from_bytes(data=raw_bytes, mime_type=mime))
+
+    return "\n\n".join(combined_texts).strip(), media_parts
+
+
+def chunk_large_text(text: str, max_chars: int = 28000) -> List[str]:
+    if len(text) <= max_chars:
+        return [text]
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(len(text), start + max_chars)
+        if end < len(text):
+            nl = text.rfind("\n", start, end)
+            if nl > start + int(max_chars * 0.6):
+                end = nl
+        chunks.append(text[start:end].strip())
+        start = end
+    return [c for c in chunks if c]
+
+
+@app.post("/api/summarize")
+async def generate_summary(
+    text_content: str = Form(""),
+    files: Optional[List[UploadFile]] = File(None),
+):
+    ensure_client()
+    full_text, media_parts = await collect_multimodal_inputs(text_content, files)
+    if not full_text and not media_parts:
+        raise HTTPException(status_code=400, detail="يرجى إدخال نص أو رفع ملف أو صورة.")
+
+    try:
+        chunks = chunk_large_text(full_text, max_chars=28000) if full_text else []
+
+        if len(chunks) > 1:
+            partial_summaries = []
+            for idx, ch in enumerate(chunks[:6], start=1):
+                part_prompt = (
+                    f"لخّص هذا الجزء ({idx} من {len(chunks)}) من المادة الدراسية باللغة العربية الفصحى الواضحة "
+                    "في نقاط منظمة تحافظ على كل التعريفات والقوانين والأفكار الأساسية:\n\n"
+                    f"{ch}"
+                )
+                part_resp = await gemini_generate(part_prompt)
+                if part_resp.text:
+                    partial_summaries.append(f"### ملخص الجزء {idx}\n{part_resp.text.strip()}")
+
+            merge_contents = [
+                "ادمج هذه الملخصات الجزئية في ملخص عربي نهائي شامل ومنسق بعناوين رئيسية وفرعية، "
+                "وجداول مقارنة عند الحاجة، وأهم النقاط للمراجعة:\n\n"
+                + "\n\n".join(partial_summaries)
+            ] + media_parts
+            final_resp = await gemini_generate(merge_contents)
+            return {"success": True, "summary": final_resp.text or ""}
+
+        prompt = (
+            "أنت معلم خبير. قم بعمل ملخص عربي شامل ومنظم للمحتوى التالي (سواء كان نصاً أو كتاباً PDF أو صوراً) باستخدام Markdown:\n"
+            "- ابدأ بالفكرة العامة للموضوع.\n"
+            "- نظّم الأفكار في عناوين واضحة ونقاط مركّزة.\n"
+            "- أبرز التعريفات، القوانين، التواريخ، والمقارنات بدقة.\n"
+            "- اختم بـ (أهم 5 نقاط للمراجعة السريعة).\n\n"
+            f"{full_text}"
+        )
+        resp = await gemini_generate([prompt] + media_parts)
+        return {"success": True, "summary": resp.text or ""}
+    except HTTPException:
+        raise
+    except Exception as e:
+        status, msg = friendly_ai_error(e)
+        raise HTTPException(status_code=status, detail=msg)
+
+
+@app.post("/api/plan")
+async def generate_study_plan(
+    text_content: str = Form(""),
+    available_time: str = Form(""),
+    files: Optional[List[UploadFile]] = File(None),
+):
+    ensure_client()
+    full_text, media_parts = await collect_multimodal_inputs(text_content, files)
+    if not full_text and not media_parts and not available_time.strip():
+        raise HTTPException(status_code=400, detail="أدخل الدروس أو ارفع ملفاً أو صورة أولاً.")
+
+    trimmed_text = full_text[:45000]
+    time_hint = available_time.strip() or "غير محدد (وزّع الخطة بمرونة حسب حجم المحتوى أو مواعيد الامتحان)"
+
+    prompt = (
+        "أنت مخطط دراسي ذكي. حلل المحتوى الدراسي أو الصور المرفقة والوقت المتاح، وأرجع النتيجة بصيغة JSON فقط بدون أي نص خارج JSON.\n"
+        f"الوقت المتاح: {time_hint}\n"
+        "هيكل JSON المطلوب:\n"
+        "{\n"
+        '  "total_estimated_time": "إجمالي المدة المقدرة",\n'
+        '  "rescuer_message": "رسالة توجيهية هادئة ومشجعة للطالب",\n'
+        '  "pomodoro_tip": "توصية بتقسيم الجلسات",\n'
+        '  "tasks": [\n'
+        "    {\n"
+        '      "id": 1,\n'
+        '      "date_label": "اليوم الأول / التاريخ",\n'
+        '      "title": "عنوان المهمة أو المادة",\n'
+        '      "time_slot": "المدة أو التوقيت المقترح",\n'
+        '      "action_steps": "خطوات عملية واضحة لما سيُنجز في هذه الجلسة"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        f"المحتوى:\n{trimmed_text}"
+    )
+
+    try:
+        resp = await gemini_generate(
+            [prompt] + media_parts,
+            config=types.GenerateContentConfig(response_mime_type="application/json"),
+        )
+        plan_obj = extract_json_clean(resp.text or "{}")
+        return {"success": True, "plan": plan_obj}
+    except HTTPException:
+        raise
+    except Exception as e:
+        status, msg = friendly_ai_error(e)
+        raise HTTPException(status_code=status, detail=msg)
+
+
+@app.post("/api/audio-script")
+async def generate_audio_script(
+    text_content: str = Form(""),
+    files: Optional[List[UploadFile]] = File(None),
+):
+    ensure_client()
+    full_text, media_parts = await collect_multimodal_inputs(text_content, files)
+    if not full_text and not media_parts:
+        raise HTTPException(status_code=400, detail="أدخل نص الدرس أو ارفع ملفاً لتوليد الشرح الصوتي.")
+
+    trimmed_text = full_text[:35000]
+    prompt = (
+        "أنت معلم يشرح الدرس صوتياً للطالب بأسلوب عربي مبسط ودافئ وواضح جداً.\n"
+        "اكتب نصاً مهيأً للقراءة الصوتية المباشرة بدون رموز نجمية (*) أو علامات تنسيق برمجية، "
+        "مع استخدام علامات الترقيم لتكون الوقفات الصوتية طبيعية ومريحة للأذن:\n\n"
+        f"{trimmed_text}"
+    )
+
+    try:
+        resp = await gemini_generate([prompt] + media_parts)
+        clean_script = re.sub(r"[#*`_~]+", "", resp.text or "").strip()
+        audio_b64 = synthesize_arabic_mp3_base64(clean_script)
+        return {"success": True, "script": clean_script, "audio_base64": audio_b64}
+    except HTTPException:
+        raise
+    except Exception as e:
+        status, msg = friendly_ai_error(e)
+        raise HTTPException(status_code=status, detail=msg)
+
+
+@app.post("/api/audio-ask")
+async def ask_during_audio(
+    question: str = Form(...),
+    lesson_context: str = Form(""),
+    current_transcript: str = Form(""),
+    files: Optional[List[UploadFile]] = File(None),
+):
+    ensure_client()
+    full_text, media_parts = await collect_multimodal_inputs(lesson_context, files)
+    prompt = (
+        "أوقف الطالب الشرح الصوتي ليسأل السؤال التالي. أجب عليه بالعربية الفصحى المبسطة بشكل مباشر وواضح "
+        "بدون رموز نجمية حتى يُقرأ الرد صوتياً بسلاسة:\n"
+        f"سؤال الطالب: {question}\n\n"
+        f"نص الشرح الحالي:\n{current_transcript[:12000]}\n\n"
+        f"سياق الدرس:\n{full_text[:15000]}"
+    )
+
+    try:
+        resp = await gemini_generate([prompt] + media_parts)
+        clean_ans = re.sub(r"[#*`_~]+", "", resp.text or "").strip()
+        audio_b64 = synthesize_arabic_mp3_base64(clean_ans)
+        return {"success": True, "answer": clean_ans, "audio_base64": audio_b64}
+    except HTTPException:
+        raise
+    except Exception as e:
+        status, msg = friendly_ai_error(e)
+        raise HTTPException(status_code=status, detail=msg)
+
+
+@app.post("/api/quiz")
+async def generate_quiz(
+    text_content: str = Form(""),
+    num_questions: int = Form(5),
+    difficulty: str = Form("متوسط"),
+    files: Optional[List[UploadFile]] = File(None),
+):
+    ensure_client()
+    full_text, media_parts = await collect_multimodal_inputs(text_content, files)
+    if not full_text and not media_parts:
+        raise HTTPException(status_code=400, detail="أدخل مادة علمية أو ارفع ملفاً لتوليد الاختبار.")
+
+    trimmed_text = full_text[:35000]
+    prompt = (
+        f"أنشئ اختبار اختيار من متعدد من {num_questions} أسئلة بمستوى ({difficulty}) باللغة العربية بناءً على المحتوى.\n"
+        "أرجع JSON فقط بالهيكل التالي:\n"
+        "{\n"
+        '  "quiz_title": "عنوان الاختبار",\n'
+        '  "questions": [\n'
+        "    {\n"
+        '      "question": "نص السؤال",\n'
+        '      "options": ["الخيار الأول", "الخيار الثاني", "الخيار الثالث", "الخيار الرابع"],\n'
+        '      "correct_index": 0,\n'
+        '      "explanation": "توضيح علمي لماذا هذه الإجابة صحيحة"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        f"المحتوى:\n{trimmed_text}"
+    )
+
+    try:
+        resp = await gemini_generate(
+            [prompt] + media_parts,
+            config=types.GenerateContentConfig(response_mime_type="application/json"),
+        )
+        quiz_obj = extract_json_clean(resp.text or "{}")
+        return {"success": True, "quiz": quiz_obj}
+    except HTTPException:
+        raise
+    except Exception as e:
+        status, msg = friendly_ai_error(e)
+        raise HTTPException(status_code=status, detail=msg)
+
+
+@app.post("/api/calm-mind-chat")
+async def calm_mind_chat(
+    message: str = Form(...),
+    history_json: str = Form("[]"),
+):
+    ensure_client()
+    clean_message = message.strip()
+    if not clean_message:
+        raise HTTPException(status_code=400, detail="اكتب رسالتك أولاً.")
+
+    history_lines = []
+    try:
+        parsed = json.loads(history_json or "[]")
+        if isinstance(parsed, list):
+            for item in parsed[-12:]:
+                if not isinstance(item, dict):
+                    continue
+                who = "الطالب" if item.get("role") == "student" else "الرفيق"
+                text = str(item.get("text", "")).strip()[:1500]
+                if text:
+                    history_lines.append(f"{who}: {text}")
+    except Exception:
+        history_lines = []
+    history_text = "\n".join(history_lines)[-5000:] or "لا يوجد سجل سابق."
+
+    prompt = (
+        "أنت رفيق دافئ وموجّه داعم في ركن «عقلية هادئة» بمنصة نظّملي. "
+        "تخاطب طالباً مؤمناً بالله يمر بضغط دراسي أو قلق أو إحباط أو تشتت.\n"
+        "التزم بالقواعد التالية بدقة:\n"
+        "1. احتوِ مشاعر الطالب بلطف وهدوء وصدق.\n"
+        "2. أدرج ضمن ردك آية قرآنية مضبوطة أو حديثاً صحيحاً ثابتاً يبعث على الصبر والسكينة والتوكل (تأكد من صحة النص 100%).\n"
+        "3. قدّم 3 خطوات عملية بسيطة وواقعية يبدأ بها الطالب فوراً لاستعادة توازنه وتركيزه.\n"
+        "4. اجعل أسلوبك طبيعياً ودافئاً ومختصراً ومركزاً.\n"
+        "5. إذا ظهر في كلام الطالب ما يدل على أذى للنفس فشجّعه بلطف على التواصل فوراً مع شخص موثوق أو جهة مختصة.\n\n"
+        f"سجل المحادثة السابق:\n{history_text}\n\n"
+        f"رسالة الطالب الآن:\n{clean_message}"
+    )
+
+    try:
+        resp = await gemini_generate(prompt)
+        reply = (resp.text or "").strip()
+        if not reply:
+            raise HTTPException(status_code=502, detail="لم يرجع Gemini ردّاً؛ حاول مرة أخرى.")
+        return {"success": True, "reply": reply}
+    except HTTPException:
+        raise
+    except Exception as e:
+        status, msg = friendly_ai_error(e)
+        raise HTTPException(status_code=status, detail=msg)
