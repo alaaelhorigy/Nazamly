@@ -775,7 +775,7 @@ def friendly_ai_error(exc: Exception) -> tuple[int, str]:
 async def gemini_generate(contents, config=None, retries: int = 1):
     models = list(dict.fromkeys([MODEL_ID] + FALLBACK_MODELS))
     last_exc: Optional[Exception] = None
-    request_timeout = 40
+    request_timeout = 50
 
     for model_name in models:
         for attempt in range(retries + 1):
@@ -870,13 +870,13 @@ async def synthesize_arabic_mp3_base64(
                         audio.extend(chunk.get("data", b""))
                 return bytes(audio)
 
-            audio = await asyncio.wait_for(generate_edge_audio(), timeout=35)
+            audio = await asyncio.wait_for(generate_edge_audio(), timeout=50)
             if audio:
                 return base64.b64encode(audio).decode("utf-8"), "edge-tts"
             raise RuntimeError("Empty Edge TTS audio")
 
         except Exception as exc:
-            print(f"[EDGE TTS ERROR] {type(exc).__name__}: {exc}", flush=True)
+            print(f"[EDGE TTS ERROR] voice={voice_key} chars={len(clean)} type={type(exc).__name__}: {exc}", flush=True)
 
     # Preserve the old audio service as a fallback.
     if allow_fallback and HAS_GTTS and gTTS is not None:
