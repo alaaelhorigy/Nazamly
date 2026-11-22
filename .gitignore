@@ -1,6 +1,58 @@
+﻿# Environment variables and secrets
 .env
-*.db
+.env.*
+!.env.example
+!.env.sample
+
+# Private credentials and keys
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+service-account*.json
+secrets/
+
+# Python cache and virtual environments
 __pycache__/
+*.py[cod]
+*$py.class
 venv/
 .venv/
+env/
+ENV/
+
+# Python testing and tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Backups and temporary files
+*.bak
+*.backup
+*.old
+*.tmp
+*.log
+*~
+
+# Local configuration
 .vscode/
+.idea/
+.vercel/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Node dependencies
+node_modules/
+
+# Local helper script
+apply_nazamly_session_patch.py
