@@ -350,28 +350,38 @@ function showAuthView(viewName) {
 }
 
 async function restoreUserSession() {
-  const savedUserRaw = localStorage.getItem("nazamly_db_user");
-  if (savedUserRaw) {
-    try {
-      state.currentUser = JSON.parse(savedUserRaw);
-    } catch (_) {
-      state.currentUser = null;
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/session`, {
+      method: "GET",
+      credentials: "include",
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || "Could not restore login session.");
     }
+    state.currentUser = data.user || null;
+  } catch (err) {
+    console.error("[SESSION RESTORE]", err);
+    state.currentUser = null;
   }
+  localStorage.removeItem("nazamly_db_user");
   await renderAccountUI();
 }
 
 async function saveToUserHistory(itemType, title, contentPayload) {
-  if (!state.currentUser || !state.currentUser.email) return;
+  if (!state.currentUser) return;
+
   try {
     const fd = new FormData();
-    fd.append("email", state.currentUser.email);
     fd.append("item_type", itemType);
     fd.append("title", title);
     fd.append("payload_json", JSON.stringify(contentPayload));
     await postFormWithTimeout("/api/history/save", fd);
     await renderAccountUI();
-  } catch (_) {}
+  } catch (err) {
+    console.error("[HISTORY SAVE]", err);
+    showAlert("تعذر حفظ الملخص في حسابك: " + err.message);
+  }
 }
 
 async function renderAccountUI() {
@@ -402,7 +412,7 @@ async function renderAccountUI() {
   listEl.innerHTML = `<p class="text-xs card-subtitle text-center py-4">جاري تحميل السجل من قاعدة البيانات...</p>`;
 
   try {
-    const res = await fetch(`${API_BASE}/api/history/list?email=${encodeURIComponent(state.currentUser.email)}`);
+    const res = await fetch(`${API_BASE}/api/history/list`, { credentials: "include" });
     const data = await res.json();
     const history = data.items || [];
     document.getElementById("savedRecordsCountBadge").textContent = `${history.length} عناصر محفوظة`;
@@ -476,7 +486,6 @@ async function renderAccountUI() {
         playClickTone();
         const id = Number(e.currentTarget.getAttribute("data-del-hist"));
         const fd = new FormData();
-        fd.append("email", state.currentUser.email);
         fd.append("item_id", String(id));
         await postFormWithTimeout("/api/history/delete", fd);
         await renderAccountUI();
@@ -564,6 +573,7 @@ async function postFormWithTimeout(endpoint, formData) {
   try {
     const res = await fetch(`${API_BASE}${endpoint}`, {
       method: "POST",
+      credentials: "include",
       body: formData,
       signal: controller.signal,
     });
@@ -1409,7 +1419,6 @@ document.addEventListener("DOMContentLoaded", () => {
       fd.append("code", code);
       const data = await postFormWithTimeout("/api/auth/verify-register", fd);
       state.currentUser = data.user;
-      localStorage.setItem("nazamly_db_user", JSON.stringify(data.user));
       await renderAccountUI();
       showAlert(`تم إنشاء حسابك وحفظه في قاعدة البيانات! أهلاً بك يا ${data.user.full_name}.`, false);
     } catch (err) {
@@ -1457,7 +1466,6 @@ document.addEventListener("DOMContentLoaded", () => {
       fd.append("code", code);
       const data = await postFormWithTimeout("/api/auth/verify-login", fd);
       state.currentUser = data.user;
-      localStorage.setItem("nazamly_db_user", JSON.stringify(data.user));
       await renderAccountUI();
       showAlert(`تم تسجيل الدخول بنجاح، أهلاً بك يا ${data.user.full_name}.`, false);
     } catch (err) {
@@ -1465,12 +1473,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  document.getElementById("logoutAccountBtn")?.addEventListener("click", () => {
+  document.getElementById("logoutAccountBtn")?.addEventListener("click", async () => {
     playClickTone();
-    localStorage.removeItem("nazamly_db_user");
-    state.currentUser = null;
-    renderAccountUI();
-    showAlert("تم تسجيل الخروج بنجاح.", false);
+    try {
+      await postFormWithTimeout("/api/auth/logout", new FormData());
+      state.currentUser = null;
+      await renderAccountUI();
+      showAlert("تم تسجيل الخروج بنجاح.", false);
+    } catch (err) {
+      showAlert(err.message);
+    }
   });
 
   document.getElementById("saveAboutVideoBtn")?.addEventListener("click", () => {
