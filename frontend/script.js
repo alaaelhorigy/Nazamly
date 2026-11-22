@@ -1559,6 +1559,20 @@ document.addEventListener("DOMContentLoaded", () => {
           previewAudio = null;
         };
         await previewAudio.play();
+
+        if (voice === "male") {
+          const status = document.getElementById("audioVoiceSelectionStatus");
+          const successMessage = "\u0634\u0627\u0643\u0631 \u0645\u0634 \u0645\u062d\u0638\u0648\u0631 \u062f\u0644\u0648\u0642\u062a\u064a";
+          if (status) {
+            status.textContent = successMessage + " \u2705";
+            window.clearTimeout(window.nazamlyVoiceStatusTimer);
+            window.nazamlyVoiceStatusTimer = window.setTimeout(() => {
+              if (status.textContent === successMessage + " \u2705") {
+                status.textContent = "\u0627\u0644\u0635\u0648\u062a \u0627\u0644\u0645\u062e\u062a\u0627\u0631: \u0634\u0627\u0643\u0631";
+              }
+            }, 2500);
+          }
+        }
       } catch (error) {
         const status = document.getElementById("audioVoiceSelectionStatus");
         if (status) {
