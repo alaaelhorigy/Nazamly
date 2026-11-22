@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import re
 import io
@@ -449,32 +449,57 @@ def friendly_ai_error(exc: Exception) -> tuple[int, str]:
     return 502, f"تعذر الاتصال بخدمة Gemini: {str(exc)[:200]}"
 
 
-async def gemini_generate(contents, config=None, retries: int = 2):
-    models = [MODEL_ID] + [m for m in FALLBACK_MODELS if m != MODEL_ID]
+async def gemini_generate(contents, config=None, retries: int = 1):
+    models = list(dict.fromkeys([MODEL_ID] + FALLBACK_MODELS))
     last_exc: Optional[Exception] = None
+    request_timeout = 40
 
     for model_name in models:
-        for attempt in range(retries):
+        for attempt in range(retries + 1):
             try:
                 kwargs = {"model": model_name, "contents": contents}
                 if config is not None:
                     kwargs["config"] = config
-                return await client.aio.models.generate_content(**kwargs)
+
+                return await asyncio.wait_for(
+                    client.aio.models.generate_content(**kwargs),
+                    timeout=request_timeout
+                )
+
+            except asyncio.TimeoutError:
+                print(
+                    f"[GEMINI TIMEOUT] model={model_name} "
+                    f"after {request_timeout} seconds"
+                )
+                raise HTTPException(
+                    status_code=504,
+                    detail="?????? ?? Gemini ????? ???? ?? ???????. ????? ??? ????."
+                )
+
             except Exception as exc:
                 last_exc = exc
-                print(f"[GEMINI ERROR] model={model_name} attempt={attempt+1}: {exc}")
+                print(
+                    f"[GEMINI ERROR] model={model_name} "
+                    f"attempt={attempt+1}: {exc}"
+                )
+
                 code = _status_of(exc)
+
                 if code in (400, 401, 403):
                     raise
+
                 if code == 404:
                     break
-                if code in (429, 500, 503) and attempt < retries - 1:
-                    await asyncio.sleep(1.0 * (attempt + 1))
-                    continue
+
                 if code in (429, 500, 503):
+                    if attempt < retries:
+                        await asyncio.sleep(1)
+                        continue
                     break
+
                 raise
-    raise last_exc if last_exc else RuntimeError("فشل استدعاء Gemini.")
+
+    raise last_exc if last_exc else RuntimeError("??? ??????? Gemini.")
 
 
 def extract_json_clean(raw: str) -> dict:
