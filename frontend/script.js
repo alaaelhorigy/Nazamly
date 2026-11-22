@@ -24,6 +24,9 @@ const state = {
   currentSummaryMd: "",
   currentAudioScript: "",
   currentAudioBase64: "",
+  currentAudioChunks: [],
+  activeAudioChunks: [],
+  activeAudioChunkIndex: 0,
   currentAudioVoice: localStorage.getItem("nazamly_audio_voice") === "male" ? "male" : "female",
   speechRate: 1,
   currentQuiz: null,
@@ -251,21 +254,109 @@ function switchPage(pageId) {
 // =========================================================================
 // 5. مشغل الصوت
 // =========================================================================
-function playGeneratedAudio(b64, fallbackText = "") {
-  const player = document.getElementById("lessonAudioPlayer");
-  if (b64 && player) {
-    player.src = `data:audio/mp3;base64,${b64}`;
-    player.playbackRate = state.speechRate;
-    player.play().then(() => {
-      document.getElementById("audioLiveStatus").textContent = "🔊 جاري تشغيل الشرح الصوتي...";
-    }).catch(() => {
-      document.getElementById("audioLiveStatus").textContent = "▶️ اضغط زر التشغيل للاستماع";
+function splitTextForTTS(text, maxChars = 450) {
+  let remaining = String(text || "").replace(/\r/g, "").trim();
+  const chunks = [];
+  const marks = ["؟", "!", ".", "؛", "،", "\n"];
+
+  while (remaining.length > maxChars) {
+    const windowText = remaining.slice(0, maxChars);
+    let cut = -1;
+
+    marks.forEach((mark) => {
+      cut = Math.max(cut, windowText.lastIndexOf(mark));
     });
-    player.onended = () => {
-      document.getElementById("audioLiveStatus").textContent = "✅ انتهى الشرح الصوتي";
-    };
-    return;
+
+    if (cut < Math.floor(maxChars * 0.4)) {
+      cut = windowText.lastIndexOf(" ");
+    }
+
+    if (cut < 1) cut = maxChars - 1;
+
+    chunks.push(remaining.slice(0, cut + 1).trim());
+    remaining = remaining.slice(cut + 1).trim();
   }
+
+  if (remaining) chunks.push(remaining);
+  return chunks.filter(Boolean);
+}
+
+async function generateAudioChunks(text, voice) {
+  const textChunks = splitTextForTTS(text, 450);
+  const audioChunks = [];
+
+  for (let i = 0; i < textChunks.length; i++) {
+    const form = new FormData();
+    form.append("text", textChunks[i]);
+    form.append("voice", voice || "female");
+
+    const data = await postFormWithTimeout("/api/tts-generate", form);
+
+    if (!data || !data.audio_base64) {
+      throw new Error(
+        "تعذر إنشاء المقطع الصوتي " + (i + 1) + " من " + textChunks.length
+      );
+    }
+
+    audioChunks.push(data.audio_base64);
+  }
+
+  return audioChunks;
+}
+
+function configureAudioQueue(audio, autoplay) {
+  const player = document.getElementById("lessonAudioPlayer");
+
+  const chunks = Array.isArray(audio)
+    ? audio.filter((chunk) => typeof chunk === "string" && chunk.length > 0)
+    : (typeof audio === "string" && audio ? [audio] : []);
+
+  if (!player || !chunks.length) return false;
+
+  state.activeAudioChunks = chunks;
+  state.activeAudioChunkIndex = 0;
+
+  const loadChunk = (index, shouldPlay) => {
+    state.activeAudioChunkIndex = index;
+
+    player.pause();
+    player.onended = null;
+    player.src = "data:audio/mpeg;base64," + chunks[index];
+    player.playbackRate = state.speechRate;
+
+    player.onended = () => {
+      if (index + 1 < chunks.length) {
+        loadChunk(index + 1, true);
+      } else {
+        state.activeAudioChunkIndex = chunks.length;
+        const status = document.getElementById("audioLiveStatus");
+        if (status) status.textContent = "انتهى الشرح الصوتي";
+      }
+    };
+
+    if (shouldPlay) {
+      const playback = player.play();
+
+      if (playback && typeof playback.then === "function") {
+        playback.then(() => {
+          const status = document.getElementById("audioLiveStatus");
+          if (status) status.textContent = "جاري تشغيل الشرح الصوتي...";
+        }).catch(() => {
+          const status = document.getElementById("audioLiveStatus");
+          if (status) status.textContent = "اضغطي زر التشغيل للاستماع";
+        });
+      }
+    } else {
+      player.load();
+    }
+  };
+
+  loadChunk(0, autoplay);
+  return true;
+}
+
+function playGeneratedAudio(audio, fallbackText = "") {
+  if (configureAudioQueue(audio, true)) return;
 
   if (fallbackText && "speechSynthesis" in window) {
     window.speechSynthesis.cancel();
@@ -274,6 +365,10 @@ function playGeneratedAudio(b64, fallbackText = "") {
     utter.rate = state.speechRate;
     window.speechSynthesis.speak(utter);
   }
+}
+
+function prepareAudioQueue(audio) {
+  return configureAudioQueue(audio, false);
 }
 
 function pauseAudioEngine() {
@@ -486,22 +581,17 @@ async function renderAccountUI() {
           document.getElementById("audioResultSection").classList.remove("hidden");
 
           try {
-            const speechForm = new FormData();
-            speechForm.append("text", state.currentAudioScript);
-            speechForm.append("voice", state.currentAudioVoice || "female");
+            state.currentAudioChunks = await generateAudioChunks(
+              state.currentAudioScript,
+              state.currentAudioVoice || "female"
+            );
+            state.currentAudioBase64 = state.currentAudioChunks[0] || "";
 
-            const speechData = await postFormWithTimeout("/api/tts-generate", speechForm);
-            state.currentAudioBase64 = speechData.audio_base64 || "";
-
-            if (!state.currentAudioBase64) {
+            if (!state.currentAudioChunks.length) {
               throw new Error("تعذر إنشاء الصوت المختار.");
             }
 
-            if (player) {
-              player.src = "data:audio/mp3;base64," + state.currentAudioBase64;
-              player.playbackRate = state.speechRate;
-              player.load();
-            }
+            prepareAudioQueue(state.currentAudioChunks);
           } catch (err) {
             showAlert("تعذر تجهيز صوت الشرح المحفوظ: " + err.message);
           }
@@ -981,19 +1071,30 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!fd) return;
       fd.append("voice", state.currentAudioVoice || "female");
       stopAudioEngine();
+      state.currentAudioChunks = [];
+      state.currentAudioBase64 = "";
+      state.activeAudioChunks = [];
+      state.activeAudioChunkIndex = 0;
+
+      const oldPlayer = document.getElementById("lessonAudioPlayer");
+      if (oldPlayer) {
+        oldPlayer.pause();
+        oldPlayer.removeAttribute("src");
+        oldPlayer.load();
+      }
+
       setBusy(true, "جاري تجهيز الشرح الصوتي المسموع...", "نولّد الشرح والصوت العربي الواضح.");
       try {
         const data = await postFormWithTimeout("/api/audio-script", fd);
         state.currentAudioScript = data.script || "";
 
-        const speechForm = new FormData();
-        speechForm.append("text", state.currentAudioScript);
-        speechForm.append("voice", state.currentAudioVoice || "female");
+        state.currentAudioChunks = await generateAudioChunks(
+          state.currentAudioScript,
+          state.currentAudioVoice || "female"
+        );
+        state.currentAudioBase64 = state.currentAudioChunks[0] || "";
 
-        const speechData = await postFormWithTimeout("/api/tts-generate", speechForm);
-        state.currentAudioBase64 = speechData.audio_base64 || "";
-
-        if (!state.currentAudioBase64) {
+        if (!state.currentAudioChunks.length) {
           throw new Error("تعذر إنشاء الصوت المختار.");
         }
         document.getElementById("audioTranscriptDisplay").textContent = state.currentAudioScript;
@@ -1005,7 +1106,7 @@ document.addEventListener("DOMContentLoaded", () => {
         saveToUserHistory("audio", `شرح صوتي: ${getShortTitleFromInput()}`, {
           script: state.currentAudioScript
         });
-        playGeneratedAudio(state.currentAudioBase64, state.currentAudioScript);
+        playGeneratedAudio(state.currentAudioChunks, state.currentAudioScript);
       } catch (err) {
         showAlert(err.message);
       } finally {
@@ -1073,10 +1174,15 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("playAudioBtn")?.addEventListener("click", () => {
     playClickTone();
     const player = document.getElementById("lessonAudioPlayer");
-    if (player && player.src) {
+
+    if (player && player.src && !player.ended) {
       player.playbackRate = state.speechRate;
       player.play();
-      document.getElementById("audioLiveStatus").textContent = "🔊 جاري تشغيل الشرح الصوتي...";
+      document.getElementById("audioLiveStatus").textContent = "جاري تشغيل الشرح الصوتي...";
+    } else if (state.currentAudioChunks.length) {
+      playGeneratedAudio(state.currentAudioChunks, state.currentAudioScript);
+    } else if (state.activeAudioChunks.length) {
+      playGeneratedAudio(state.activeAudioChunks, state.currentAudioScript);
     } else {
       playGeneratedAudio(state.currentAudioBase64, state.currentAudioScript);
     }
@@ -1089,10 +1195,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("restartAudioBtn")?.addEventListener("click", () => {
     playClickTone();
-    const player = document.getElementById("lessonAudioPlayer");
-    if (player && player.src) {
-      player.currentTime = 0;
-      player.play();
+    const chunks = state.activeAudioChunks.length
+      ? state.activeAudioChunks
+      : state.currentAudioChunks;
+
+    if (chunks.length) {
+      playGeneratedAudio(chunks, state.currentAudioScript);
     } else {
       playGeneratedAudio(state.currentAudioBase64, state.currentAudioScript);
     }
@@ -1140,16 +1248,12 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const data = await postFormWithTimeout("/api/audio-ask", fd);
 
-      const speechForm = new FormData();
-      speechForm.append("text", data.answer || "");
-      speechForm.append("voice", state.currentAudioVoice || "female");
-
-      const speechData = await postFormWithTimeout("/api/tts-generate", speechForm);
+      const answerAudioChunks = await generateAudioChunks(data.answer || "", state.currentAudioVoice || "female");
 
       typingBubble.className = "rounded-xl p-3.5 text-xs sm:text-sm card-title inner-subpanel border leading-relaxed";
       typingBubble.innerHTML = `<strong class="block mb-1">المدرس:</strong>${escapeHtml(data.answer)}`;
       document.getElementById("resumeLessonAfterQaBtn").classList.remove("hidden");
-      playGeneratedAudio(speechData.audio_base64, data.answer);
+      playGeneratedAudio(answerAudioChunks, data.answer);
     } catch (err) {
       typingBubble.textContent = `تعذر الرد: ${err.message}`;
     }
@@ -1158,7 +1262,10 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("resumeLessonAfterQaBtn")?.addEventListener("click", () => {
     playClickTone();
     document.getElementById("resumeLessonAfterQaBtn").classList.add("hidden");
-    playGeneratedAudio(state.currentAudioBase64, state.currentAudioScript);
+    playGeneratedAudio(
+      state.currentAudioChunks.length ? state.currentAudioChunks : state.currentAudioBase64,
+      state.currentAudioScript
+    );
   });
 
   document.getElementById("submitQuizAnswersBtn")?.addEventListener("click", () => {
