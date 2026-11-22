@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import re
 import io
@@ -818,18 +818,38 @@ def extract_json_clean(raw: str) -> dict:
 
 def synthesize_arabic_mp3_base64(text: str) -> str:
     if not HAS_GTTS:
+        print("[GTTS ERROR] Library is not installed", flush=True)
         return ""
+
     clean_for_tts = re.sub(r"[#*`_~•\-]+", " ", text).strip()
+
+    print(f"[GTTS DEBUG] Original length: {len(text)}", flush=True)
+    print(f"[GTTS DEBUG] Cleaned length: {len(clean_for_tts)}", flush=True)
+
     if not clean_for_tts:
+        print("[GTTS ERROR] Text is empty", flush=True)
         return ""
+
     try:
         tts = gTTS(text=clean_for_tts[:3500], lang="ar", slow=False)
         mp3_fp = io.BytesIO()
         tts.write_to_fp(mp3_fp)
+
         mp3_fp.seek(0)
-        return base64.b64encode(mp3_fp.read()).decode("utf-8")
-    except Exception:
+        audio_bytes = mp3_fp.read()
+
+        print(f"[GTTS DEBUG] Audio bytes: {len(audio_bytes)}", flush=True)
+
+        if not audio_bytes:
+            print("[GTTS ERROR] Generated audio is empty", flush=True)
+            return ""
+
+        return base64.b64encode(audio_bytes).decode("utf-8")
+
+    except Exception as e:
+        print(f"[GTTS ERROR] {type(e).__name__}: {e}", flush=True)
         return ""
+
 
 
 async def collect_multimodal_inputs(
