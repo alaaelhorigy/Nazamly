@@ -1561,7 +1561,11 @@ document.addEventListener("DOMContentLoaded", () => {
         await previewAudio.play();
       } catch (error) {
         const status = document.getElementById("audioVoiceSelectionStatus");
-        if (status) status.textContent = error.message || "تعذر تشغيل عينة الصوت الآن.";
+        if (status) {
+          status.textContent = voice === "male"
+            ? "\u0634\u0627\u0643\u0631 \u0645\u062d\u0638\u0648\u0631 \u062f\u0644\u0648\u0642\u062a\u064a"
+            : (error.message || "\u062a\u0639\u0630\u0631 \u062a\u0634\u063a\u064a\u0644 \u0639\u064a\u0646\u0629 \u0627\u0644\u0635\u0648\u062a \u0627\u0644\u0622\u0646.")
+        }
       } finally {
         button.disabled = false;
         button.textContent = originalText;
