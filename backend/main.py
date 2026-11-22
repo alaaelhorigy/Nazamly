@@ -34,7 +34,7 @@ client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 MODEL_ID = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
 FALLBACK_MODELS = [
     x.strip()
-    for x in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.8-flash").split(",")
+    for x in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite").split(",")
     if x.strip()
 ]
 
@@ -466,15 +466,13 @@ async def gemini_generate(contents, config=None, retries: int = 1):
                     timeout=request_timeout
                 )
 
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError as exc:
+                last_exc = exc
                 print(
                     f"[GEMINI TIMEOUT] model={model_name} "
                     f"after {request_timeout} seconds"
                 )
-                raise HTTPException(
-                    status_code=504,
-                    detail="?????? ?? Gemini ????? ???? ?? ???????. ????? ??? ????."
-                )
+                break
 
             except Exception as exc:
                 last_exc = exc
@@ -499,6 +497,11 @@ async def gemini_generate(contents, config=None, retries: int = 1):
 
                 raise
 
+    if isinstance(last_exc, asyncio.TimeoutError):
+        raise HTTPException(
+            status_code=504,
+            detail="\u062a\u0623\u062e\u0631 \u0631\u062f Gemini. \u062d\u0627\u0648\u0644\u064a \u0645\u0631\u0629 \u0623\u062e\u0631\u0649."
+        )
     raise last_exc if last_exc else RuntimeError("??? ??????? Gemini.")
 
 
