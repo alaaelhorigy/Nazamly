@@ -648,25 +648,40 @@ async def logout(request: Request, response: Response):
 
 
 @app.post("/api/history/save")
-async def save_history_item(
-    request: Request,
-    item_type: str = Form(...),
-    title: str = Form(...),
-    payload_json: str = Form(...),
-):
+async def save_history_item(request: Request):
     clean_email = require_current_user(request)["email"]
-    conn = get_db()
-    user = conn.execute("SELECT id FROM users WHERE email = ?", (clean_email,)).fetchone()
-    if not user:
-        conn.close()
-        raise HTTPException(status_code=404, detail="المستخدم غير موجود.")
 
-    conn.execute(
-        "INSERT INTO user_history (user_email, item_type, title, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
-        (clean_email, item_type, title, payload_json, datetime.now().strftime("%Y-%m-%d %H:%M")),
-    )
-    conn.commit()
-    conn.close()
+    form = await request.form(max_part_size=10 * 1024 * 1024)
+
+    item_type = str(form.get("item_type") or "").strip()
+    title = str(form.get("title") or "").strip()
+    payload_json = str(form.get("payload_json") or "")
+
+    if not item_type or not title or not payload_json:
+        raise HTTPException(status_code=400, detail="بيانات الحفظ غير مكتملة.")
+
+    try:
+        json.loads(payload_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="بيانات الحفظ غير صالحة.") from exc
+
+    conn = get_db()
+    try:
+        user = conn.execute(
+            "SELECT id FROM users WHERE email = ?", (clean_email,)
+        ).fetchone()
+
+        if not user:
+            raise HTTPException(status_code=404, detail="المستخدم غير موجود.")
+
+        conn.execute(
+            "INSERT INTO user_history (user_email, item_type, title, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
+            (clean_email, item_type, title, payload_json, datetime.now().strftime("%Y-%m-%d %H:%M")),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
     return {"success": True}
 
 
@@ -1074,8 +1089,7 @@ async def generate_audio_script(
     try:
         resp = await gemini_generate([prompt] + media_parts)
         clean_script = re.sub(r"[#*`_~]+", "", resp.text or "").strip()
-        audio_b64, audio_engine = await synthesize_arabic_mp3_base64(clean_script, voice)
-        return {"success": True, "script": clean_script, "audio_base64": audio_b64, "audio_engine": audio_engine, "voice": voice if voice in EDGE_TTS_VOICES else "female"}
+        return {"success": True, "script": clean_script, "audio_base64": "", "audio_engine": "pending", "voice": voice if voice in EDGE_TTS_VOICES else "female"}
     except HTTPException:
         raise
     except Exception as e:
@@ -1104,14 +1118,45 @@ async def ask_during_audio(
     try:
         resp = await gemini_generate([prompt] + media_parts)
         clean_ans = re.sub(r"[#*`_~]+", "", resp.text or "").strip()
-        audio_b64, audio_engine = await synthesize_arabic_mp3_base64(clean_ans, voice)
-        return {"success": True, "answer": clean_ans, "audio_base64": audio_b64, "audio_engine": audio_engine, "voice": voice if voice in EDGE_TTS_VOICES else "female"}
+        return {"success": True, "answer": clean_ans, "audio_base64": "", "audio_engine": "pending", "voice": voice if voice in EDGE_TTS_VOICES else "female"}
     except HTTPException:
         raise
     except Exception as e:
         status, msg = friendly_ai_error(e)
         raise HTTPException(status_code=status, detail=msg)
 
+
+
+
+@app.post("/api/tts-generate")
+async def generate_selected_tts(
+    text: str = Form(...),
+    voice: str = Form("female"),
+):
+    clean_text = (text or "").strip()
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="No text was provided.")
+
+    selected_voice = voice if voice in EDGE_TTS_VOICES else "female"
+
+    audio, engine = await synthesize_arabic_mp3_base64(
+        clean_text,
+        selected_voice,
+        allow_fallback=False,
+    )
+
+    if not audio or engine != "edge-tts":
+        raise HTTPException(
+            status_code=503,
+            detail="\u062a\u0639\u0630\u0631 \u062a\u0648\u0644\u064a\u062f \u0627\u0644\u0635\u0648\u062a \u0627\u0644\u0645\u062e\u062a\u0627\u0631. \u062d\u0627\u0648\u0644\u064a \u0645\u0631\u0629 \u0623\u062e\u0631\u0649.",
+        )
+
+    return {
+        "success": True,
+        "audio_base64": audio,
+        "audio_engine": engine,
+        "voice": selected_voice,
+    }
 
 @app.post("/api/tts-preview")
 async def preview_tts_voice(voice: str = Form("female")):

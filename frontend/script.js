@@ -458,7 +458,7 @@ async function renderAccountUI() {
     });
 
     document.querySelectorAll(".open-hist-btn").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
+      btn.addEventListener("click", async (e) => {
         const id = Number(e.currentTarget.getAttribute("data-open-hist"));
         const item = history.find((x) => x.id === id);
         if (!item) return;
@@ -473,9 +473,38 @@ async function renderAccountUI() {
           renderPlan(true);
         } else if (item.type === "audio") {
           state.currentAudioScript = item.payload.script || "";
-          state.currentAudioBase64 = item.payload.audio_base64 || "";
+          state.currentAudioBase64 = "";
+
+          const player = document.getElementById("lessonAudioPlayer");
+          if (player) {
+            player.pause();
+            player.removeAttribute("src");
+            player.load();
+          }
+
           document.getElementById("audioTranscriptDisplay").textContent = state.currentAudioScript;
           document.getElementById("audioResultSection").classList.remove("hidden");
+
+          try {
+            const speechForm = new FormData();
+            speechForm.append("text", state.currentAudioScript);
+            speechForm.append("voice", state.currentAudioVoice || "female");
+
+            const speechData = await postFormWithTimeout("/api/tts-generate", speechForm);
+            state.currentAudioBase64 = speechData.audio_base64 || "";
+
+            if (!state.currentAudioBase64) {
+              throw new Error("تعذر إنشاء الصوت المختار.");
+            }
+
+            if (player) {
+              player.src = "data:audio/mp3;base64," + state.currentAudioBase64;
+              player.playbackRate = state.speechRate;
+              player.load();
+            }
+          } catch (err) {
+            showAlert("تعذر تجهيز صوت الشرح المحفوظ: " + err.message);
+          }
         } else if (item.type === "quiz") {
           state.currentQuiz = item.payload.quiz;
           state.userAnswers = {};
@@ -956,7 +985,17 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         const data = await postFormWithTimeout("/api/audio-script", fd);
         state.currentAudioScript = data.script || "";
-        state.currentAudioBase64 = data.audio_base64 || "";
+
+        const speechForm = new FormData();
+        speechForm.append("text", state.currentAudioScript);
+        speechForm.append("voice", state.currentAudioVoice || "female");
+
+        const speechData = await postFormWithTimeout("/api/tts-generate", speechForm);
+        state.currentAudioBase64 = speechData.audio_base64 || "";
+
+        if (!state.currentAudioBase64) {
+          throw new Error("تعذر إنشاء الصوت المختار.");
+        }
         document.getElementById("audioTranscriptDisplay").textContent = state.currentAudioScript;
         document.getElementById("liveAudioChatMessages").innerHTML =
           `<p class="text-xs card-subtitle text-center py-1">الشرح جاهز! يبدأ الصوت الآن.</p>`;
@@ -964,8 +1003,7 @@ document.addEventListener("DOMContentLoaded", () => {
         sec.classList.remove("hidden");
         sec.scrollIntoView({ behavior: "smooth", block: "start" });
         saveToUserHistory("audio", `شرح صوتي: ${getShortTitleFromInput()}`, {
-          script: state.currentAudioScript,
-          audio_base64: state.currentAudioBase64,
+          script: state.currentAudioScript
         });
         playGeneratedAudio(state.currentAudioBase64, state.currentAudioScript);
       } catch (err) {
@@ -1101,10 +1139,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
     try {
       const data = await postFormWithTimeout("/api/audio-ask", fd);
+
+      const speechForm = new FormData();
+      speechForm.append("text", data.answer || "");
+      speechForm.append("voice", state.currentAudioVoice || "female");
+
+      const speechData = await postFormWithTimeout("/api/tts-generate", speechForm);
+
       typingBubble.className = "rounded-xl p-3.5 text-xs sm:text-sm card-title inner-subpanel border leading-relaxed";
       typingBubble.innerHTML = `<strong class="block mb-1">المدرس:</strong>${escapeHtml(data.answer)}`;
       document.getElementById("resumeLessonAfterQaBtn").classList.remove("hidden");
-      playGeneratedAudio(data.audio_base64, data.answer);
+      playGeneratedAudio(speechData.audio_base64, data.answer);
     } catch (err) {
       typingBubble.textContent = `تعذر الرد: ${err.message}`;
     }
@@ -1562,15 +1607,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (voice === "male") {
           const status = document.getElementById("audioVoiceSelectionStatus");
-          const successMessage = "\u0634\u0627\u0643\u0631 \u0645\u0634 \u0645\u062d\u0638\u0648\u0631 \u062f\u0644\u0648\u0642\u062a\u064a";
           if (status) {
-            status.textContent = successMessage + " \u2705";
-            window.clearTimeout(window.nazamlyVoiceStatusTimer);
-            window.nazamlyVoiceStatusTimer = window.setTimeout(() => {
-              if (status.textContent === successMessage + " \u2705") {
-                status.textContent = "\u0627\u0644\u0635\u0648\u062a \u0627\u0644\u0645\u062e\u062a\u0627\u0631: \u0634\u0627\u0643\u0631";
-              }
-            }, 2500);
+            status.textContent = "شاكر مش محظور دلوقتي";
           }
         }
       } catch (error) {
