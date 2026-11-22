@@ -24,6 +24,7 @@ const state = {
   currentSummaryMd: "",
   currentAudioScript: "",
   currentAudioBase64: "",
+  currentAudioVoice: localStorage.getItem("nazamly_audio_voice") === "male" ? "male" : "female",
   speechRate: 1,
   currentQuiz: null,
   userAnswers: {},
@@ -304,9 +305,12 @@ function setActiveMode(mode) {
   const badgeEl = document.getElementById("activeModeBadge");
   const quizPanel = document.getElementById("quizSetupPanel");
   const timeWrapper = document.getElementById("availableTimeWrapper");
+  const audioVoicePicker = document.getElementById("audioVoicePicker");
 
   if (selectEl) selectEl.value = validMode;
   if (badgeEl) badgeEl.textContent = MODE_LABELS[validMode];
+
+  if (audioVoicePicker) audioVoicePicker.classList.toggle("hidden", validMode !== "audio");
 
   if (timeWrapper) {
     if (validMode === "plan") timeWrapper.classList.remove("hidden");
@@ -946,6 +950,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } else if (mode === "audio") {
       const fd = buildPayload();
       if (!fd) return;
+      fd.append("voice", state.currentAudioVoice || "female");
       stopAudioEngine();
       setBusy(true, "جاري تجهيز الشرح الصوتي المسموع...", "نولّد الشرح والصوت العربي الواضح.");
       try {
@@ -1092,6 +1097,7 @@ document.addEventListener("DOMContentLoaded", () => {
     fd.append("question", question);
     fd.append("lesson_context", document.getElementById("studyTextInput").value.trim());
     fd.append("current_transcript", state.currentAudioScript);
+    fd.append("voice", state.currentAudioVoice || "female");
 
     try {
       const data = await postFormWithTimeout("/api/audio-ask", fd);
@@ -1493,4 +1499,75 @@ document.addEventListener("DOMContentLoaded", () => {
     renderAboutVideo(url);
     showAlert("تم إضافة الفيديو في صفحة (عنّا) بنجاح.", false);
   });
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  const picker = document.getElementById("audioVoicePicker");
+  if (!picker) return;
+
+  let selectedVoice = localStorage.getItem("nazamly_audio_voice") === "male" ? "male" : "female";
+  let previewAudio = null;
+  let previewUrl = null;
+
+  const updateVoiceUI = () => {
+    picker.querySelectorAll("[data-audio-voice]").forEach((button) => {
+      const selected = button.dataset.audioVoice === selectedVoice;
+      button.setAttribute("aria-pressed", String(selected));
+      button.classList.toggle("border-amber-400", selected);
+      button.classList.toggle("bg-amber-400/10", selected);
+      button.classList.toggle("ring-2", selected);
+      const mark = button.querySelector(".voice-selected-mark");
+      if (mark) mark.classList.toggle("hidden", !selected);
+    });
+    const status = document.getElementById("audioVoiceSelectionStatus");
+    if (status) status.textContent = `الصوت المختار: ${selectedVoice === "female" ? "سلمى" : "شاكر"}`;
+    if (typeof state !== "undefined") state.currentAudioVoice = selectedVoice;
+  };
+
+  picker.querySelectorAll("[data-audio-voice]").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedVoice = button.dataset.audioVoice === "male" ? "male" : "female";
+      localStorage.setItem("nazamly_audio_voice", selectedVoice);
+      if (typeof state !== "undefined") state.currentAudioVoice = selectedVoice;
+      updateVoiceUI();
+    });
+  });
+
+  picker.querySelectorAll("[data-preview-voice]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const voice = button.dataset.previewVoice === "male" ? "male" : "female";
+      const originalText = button.textContent;
+      button.disabled = true;
+      button.textContent = "جاري تجهيز العينة...";
+      try {
+        const form = new FormData();
+        form.append("voice", voice);
+        const data = await postFormWithTimeout("/api/tts-preview", form);
+        if (!data.audio_base64) throw new Error("لم يصل ملف الصوت التجريبي.");
+
+        const binary = atob(data.audio_base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: "audio/mpeg" });
+        if (previewAudio) previewAudio.pause();
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = URL.createObjectURL(blob);
+        previewAudio = new Audio(previewUrl);
+        previewAudio.onended = () => {
+          if (previewUrl) URL.revokeObjectURL(previewUrl);
+          previewUrl = null;
+          previewAudio = null;
+        };
+        await previewAudio.play();
+      } catch (error) {
+        const status = document.getElementById("audioVoiceSelectionStatus");
+        if (status) status.textContent = error.message || "تعذر تشغيل عينة الصوت الآن.";
+      } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    });
+  });
+
+  updateVoiceUI();
 });

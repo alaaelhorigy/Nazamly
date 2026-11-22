@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import re
 import io
@@ -24,9 +24,17 @@ from google import genai
 from google.genai import types
 
 try:
+    import edge_tts
+    HAS_EDGE_TTS = True
+except ImportError:
+    edge_tts = None
+    HAS_EDGE_TTS = False
+
+try:
     from gtts import gTTS
     HAS_GTTS = True
 except ImportError:
+    gTTS = None
     HAS_GTTS = False
 
 load_dotenv()
@@ -816,40 +824,64 @@ def extract_json_clean(raw: str) -> dict:
     return json.loads(cleaned)
 
 
-def synthesize_arabic_mp3_base64(text: str) -> str:
-    if not HAS_GTTS:
-        print("[GTTS ERROR] Library is not installed", flush=True)
-        return ""
+EDGE_TTS_VOICES = {
+    "female": "ar-EG-SalmaNeural",
+    "male": "ar-EG-ShakirNeural",
+}
 
-    clean_for_tts = re.sub(r"[#*`_~•\-]+", " ", text).strip()
 
-    print(f"[GTTS DEBUG] Original length: {len(text)}", flush=True)
-    print(f"[GTTS DEBUG] Cleaned length: {len(clean_for_tts)}", flush=True)
+async def synthesize_arabic_mp3_base64(
+    text: str, voice: str = "female", allow_fallback: bool = True
+) -> tuple[str, str]:
+    clean = re.sub(r"[#*`_~•\-]+", " ", str(text or "")).strip()
+    if not clean:
+        return "", "unavailable"
 
-    if not clean_for_tts:
-        print("[GTTS ERROR] Text is empty", flush=True)
-        return ""
+    voice_key = voice if voice in EDGE_TTS_VOICES else "female"
+    clean = clean[:3500]
 
-    try:
-        tts = gTTS(text=clean_for_tts[:3500], lang="ar", slow=False)
-        mp3_fp = io.BytesIO()
-        tts.write_to_fp(mp3_fp)
+    if HAS_EDGE_TTS:
+        try:
+            async def generate_edge_audio():
+                communicator = edge_tts.Communicate(
+                    text=clean,
+                    voice=EDGE_TTS_VOICES[voice_key],
+                    rate="-5%",
+                    pitch="-1Hz",
+                )
+                audio = bytearray()
+                async for chunk in communicator.stream():
+                    if chunk.get("type") == "audio":
+                        audio.extend(chunk.get("data", b""))
+                return bytes(audio)
 
-        mp3_fp.seek(0)
-        audio_bytes = mp3_fp.read()
+            audio = await asyncio.wait_for(generate_edge_audio(), timeout=35)
+            if audio:
+                return base64.b64encode(audio).decode("utf-8"), "edge-tts"
+            raise RuntimeError("Empty Edge TTS audio")
 
-        print(f"[GTTS DEBUG] Audio bytes: {len(audio_bytes)}", flush=True)
+        except Exception as exc:
+            print(f"[EDGE TTS ERROR] {type(exc).__name__}: {exc}", flush=True)
 
-        if not audio_bytes:
-            print("[GTTS ERROR] Generated audio is empty", flush=True)
-            return ""
+    # Preserve the old audio service as a fallback.
+    if allow_fallback and HAS_GTTS and gTTS is not None:
+        try:
+            def generate_gtts_audio():
+                tts = gTTS(text=clean, lang="ar", slow=False)
+                fp = io.BytesIO()
+                tts.write_to_fp(fp)
+                return fp.getvalue()
 
-        return base64.b64encode(audio_bytes).decode("utf-8")
+            audio = await asyncio.wait_for(
+                asyncio.to_thread(generate_gtts_audio), timeout=25
+            )
+            if audio:
+                return base64.b64encode(audio).decode("utf-8"), "gtts-fallback"
 
-    except Exception as e:
-        print(f"[GTTS ERROR] {type(e).__name__}: {e}", flush=True)
-        return ""
+        except Exception as exc:
+            print(f"[GTTS FALLBACK ERROR] {type(exc).__name__}: {exc}", flush=True)
 
+    return "", "unavailable"
 
 
 async def collect_multimodal_inputs(
@@ -1023,6 +1055,7 @@ async def generate_study_plan(
 @app.post("/api/audio-script")
 async def generate_audio_script(
     text_content: str = Form(""),
+    voice: str = Form("female"),
     files: Optional[List[UploadFile]] = File(None),
 ):
     ensure_client()
@@ -1041,8 +1074,8 @@ async def generate_audio_script(
     try:
         resp = await gemini_generate([prompt] + media_parts)
         clean_script = re.sub(r"[#*`_~]+", "", resp.text or "").strip()
-        audio_b64 = synthesize_arabic_mp3_base64(clean_script)
-        return {"success": True, "script": clean_script, "audio_base64": audio_b64}
+        audio_b64, audio_engine = await synthesize_arabic_mp3_base64(clean_script, voice)
+        return {"success": True, "script": clean_script, "audio_base64": audio_b64, "audio_engine": audio_engine, "voice": voice if voice in EDGE_TTS_VOICES else "female"}
     except HTTPException:
         raise
     except Exception as e:
@@ -1055,6 +1088,7 @@ async def ask_during_audio(
     question: str = Form(...),
     lesson_context: str = Form(""),
     current_transcript: str = Form(""),
+    voice: str = Form("female"),
     files: Optional[List[UploadFile]] = File(None),
 ):
     ensure_client()
@@ -1070,13 +1104,32 @@ async def ask_during_audio(
     try:
         resp = await gemini_generate([prompt] + media_parts)
         clean_ans = re.sub(r"[#*`_~]+", "", resp.text or "").strip()
-        audio_b64 = synthesize_arabic_mp3_base64(clean_ans)
-        return {"success": True, "answer": clean_ans, "audio_base64": audio_b64}
+        audio_b64, audio_engine = await synthesize_arabic_mp3_base64(clean_ans, voice)
+        return {"success": True, "answer": clean_ans, "audio_base64": audio_b64, "audio_engine": audio_engine, "voice": voice if voice in EDGE_TTS_VOICES else "female"}
     except HTTPException:
         raise
     except Exception as e:
         status, msg = friendly_ai_error(e)
         raise HTTPException(status_code=status, detail=msg)
+
+
+@app.post("/api/tts-preview")
+async def preview_tts_voice(voice: str = Form("female")):
+    sample = "مرحباً بك في نظّملي. سأشرح لك الدرس خطوةً خطوة، وبأسلوب واضح وهادئ."
+    audio, engine = await synthesize_arabic_mp3_base64(
+        sample, voice, allow_fallback=False
+    )
+    if not audio:
+        raise HTTPException(
+            status_code=503,
+            detail="تعذر تشغيل عينة الصوت العصبي الآن. تحققي من الاتصال وحاولي مرة أخرى.",
+        )
+    return {
+        "success": True,
+        "audio_base64": audio,
+        "audio_engine": engine,
+        "voice": voice if voice in EDGE_TTS_VOICES else "female",
+    }
 
 
 @app.post("/api/quiz")

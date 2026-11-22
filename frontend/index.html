@@ -358,6 +358,32 @@
             </div>
           </div>
 
+          <div id="audioVoicePicker" class="hidden inner-subpanel border rounded-2xl p-4 space-y-3">
+            <div>
+              <h3 class="text-sm font-extrabold card-title">🎙️ اختار صوت المعلّم</h3>
+              <p class="text-xs card-subtitle mt-1">جرّب الصوتين واختر المعلّم المفضل لديك.</p>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div class="rounded-xl border panel-divider p-3 space-y-2">
+                <button type="button" data-audio-voice="female" aria-pressed="true" class="audio-voice-option w-full rounded-xl border p-3 text-right flex items-center gap-3">
+                  <span class="text-2xl">👩🏻‍🏫</span>
+                  <span class="flex-1"><strong class="block text-sm card-title">صوت أنثوي · سلمى</strong><small class="card-subtitle">هادئ ودافئ</small></span>
+                  <span class="voice-selected-mark text-emerald-500">✓</span>
+                </button>
+                <button type="button" data-preview-voice="female" class="w-full rounded-lg px-3 py-2 text-xs font-bold cta-secondary-btn border">▶ استمع إلى عينة</button>
+              </div>
+              <div class="rounded-xl border panel-divider p-3 space-y-2">
+                <button type="button" data-audio-voice="male" aria-pressed="false" class="audio-voice-option w-full rounded-xl border p-3 text-right flex items-center gap-3">
+                  <span class="text-2xl">👨🏻‍🏫</span>
+                  <span class="flex-1"><strong class="block text-sm card-title">صوت رجالي · شاكر</strong><small class="card-subtitle">واضح وهادئ</small></span>
+                  <span class="voice-selected-mark hidden text-emerald-500">✓</span>
+                </button>
+                <button type="button" data-preview-voice="male" class="w-full rounded-lg px-3 py-2 text-xs font-bold cta-secondary-btn border">▶ استمع إلى عينة</button>
+              </div>
+            </div>
+            <p id="audioVoiceSelectionStatus" class="text-[11px] card-subtitle" aria-live="polite">الصوت المختار: سلمى</p>
+          </div>
+
           <div class="pt-4 border-t panel-divider flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
             <div class="flex flex-col sm:flex-row sm:items-center gap-2">
               <label for="textSendTypeSelect" class="text-xs sm:text-sm font-extrabold card-title">
