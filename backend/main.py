@@ -31,10 +31,10 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-MODEL_ID = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+MODEL_ID = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
 FALLBACK_MODELS = [
     x.strip()
-    for x in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash,gemini-2.0-flash").split(",")
+    for x in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.8-flash").split(",")
     if x.strip()
 ]
 
