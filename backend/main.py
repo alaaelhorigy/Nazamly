@@ -982,25 +982,86 @@ async def generate_summary(
         chunks = chunk_large_text(full_text, max_chars=28000) if full_text else []
 
         if len(chunks) > 1:
-            partial_summaries = []
-            for idx, ch in enumerate(chunks[:6], start=1):
-                part_prompt = (
-                    f"لخّص هذا الجزء ({idx} من {len(chunks)}) من المادة الدراسية باللغة العربية الفصحى الواضحة "
-                    "في نقاط منظمة تحافظ على كل التعريفات والقوانين والأفكار الأساسية:\n\n"
-                    f"{ch}"
+            batch_summaries = []
+            batch_size = 2
+
+            for batch_start in range(0, len(chunks), batch_size):
+                batch_end = min(len(chunks), batch_start + batch_size)
+                batch_text = "\n\n".join(
+                    f"الجزء {i + 1} من {len(chunks)}:\n{chunks[i]}"
+                    for i in range(batch_start, batch_end)
                 )
+
+                part_prompt = (
+                    "أنت معلم خبير تلخص كتاباً دراسياً كبيراً. "
+                    "لخص المقاطع التالية باللغة العربية الواضحة والمنظمة. "
+                    "احتفظ بالتعريفات والقوانين والمعادلات والتواريخ والأمثلة "
+                    "والأسماء والمقارنات والأفكار الأساسية. لا تخترع معلومات "
+                    "ولا تتجاهل معلومة علمية مهمة. استخدم عناوين ونقاطاً واضحة:\n\n"
+                    + batch_text
+                )
+
                 part_resp = await gemini_generate(part_prompt)
-                if part_resp.text:
-                    partial_summaries.append(f"### ملخص الجزء {idx}\n{part_resp.text.strip()}")
+                part_text = (part_resp.text or "").strip()
 
-            merge_contents = [
-                "ادمج هذه الملخصات الجزئية في ملخص عربي نهائي شامل ومنسق بعناوين رئيسية وفرعية، "
-                "وجداول مقارنة عند الحاجة، وأهم النقاط للمراجعة:\n\n"
-                + "\n\n".join(partial_summaries)
-            ] + media_parts
-            final_resp = await gemini_generate(merge_contents)
-            return {"success": True, "summary": final_resp.text or ""}
+                if not part_text:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="تعذر تلخيص جزء من الكتاب. لم يتم تجاهل بقية الأجزاء؛ يرجى إعادة المحاولة."
+                    )
 
+                batch_summaries.append(
+                    f"ملخص الدفعة {batch_start // batch_size + 1}:\n{part_text}"
+                )
+
+            # Merge intermediate summaries in groups to control request size.
+            while len(batch_summaries) > 4:
+                reduced = []
+
+                for group_start in range(0, len(batch_summaries), 4):
+                    group = batch_summaries[group_start:group_start + 4]
+                    merge_prompt = (
+                        "ادمج الملخصات التالية في ملخص وسيط باللغة العربية. "
+                        "احتفظ بكل المعلومات الفريدة والتعريفات والقوانين والأمثلة. "
+                        "احذف التكرار فقط ولا تحذف معلومة مهمة:\n\n"
+                        + "\n\n".join(group)
+                    )
+
+                    merged = await gemini_generate(merge_prompt)
+                    merged_text = (merged.text or "").strip()
+
+                    if not merged_text:
+                        raise HTTPException(
+                            status_code=502,
+                            detail="تعذر دمج بعض أجزاء الكتاب. يرجى إعادة المحاولة."
+                        )
+
+                    reduced.append(merged_text)
+
+                batch_summaries = reduced
+
+            final_prompt = (
+                "أنشئ ملخصاً نهائياً شاملاً باللغة العربية من الملخصات التالية. "
+                "نظّم المحتوى بعناوين رئيسية وفرعية ونقاط دقيقة وجداول مقارنة عند الحاجة. "
+                "أبرز التعريفات والقوانين والمعادلات والتواريخ والأمثلة، "
+                "واختم بأهم 10 نقاط للمراجعة. لا تضف معلومات غير موجودة ولا تسقط موضوعاً أساسياً:\n\n"
+                + "\n\n".join(batch_summaries)
+            )
+
+            final_resp = await gemini_generate([final_prompt] + media_parts)
+            final_summary = (final_resp.text or "").strip()
+
+            if not final_summary:
+                raise HTTPException(
+                    status_code=502,
+                    detail="تعذر إنشاء الملخص النهائي للكتاب. يرجى إعادة المحاولة."
+                )
+
+            return {
+                "success": True,
+                "summary": final_summary,
+                "processed_chunks": len(chunks),
+            }
         prompt = (
             "أنت معلم خبير. قم بعمل ملخص عربي شامل ومنظم للمحتوى التالي (سواء كان نصاً أو كتاباً PDF أو صوراً) باستخدام Markdown:\n"
             "- ابدأ بالفكرة العامة للموضوع.\n"

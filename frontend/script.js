@@ -1734,3 +1734,415 @@ document.addEventListener("DOMContentLoaded", () => {
 
   updateVoiceUI();
 });
+
+
+/* NAZAMLY_PDF_EXPORT_V3 */
+(function initNazamlyPdfExport() {
+  "use strict";
+
+  function printMarkdown(value) {
+    const holder = document.createElement("div");
+
+    holder.innerHTML =
+      typeof marked !== "undefined" && typeof marked.parse === "function"
+        ? marked.parse(String(value || ""))
+        : `<p>${escapeHtml(value || "").replace(/\r?\n/g, "<br>")}</p>`;
+
+    const allowed = new Set([
+      "H1", "H2", "H3", "H4", "P", "UL", "OL", "LI",
+      "STRONG", "B", "EM", "I", "BR", "BLOCKQUOTE",
+      "TABLE", "THEAD", "TBODY", "TR", "TH", "TD", "HR", "CODE", "PRE"
+    ]);
+
+    holder.querySelectorAll("*").forEach((node) => {
+      if (!allowed.has(node.tagName)) {
+        node.replaceWith(...Array.from(node.childNodes));
+      } else {
+        Array.from(node.attributes).forEach((attr) => node.removeAttribute(attr.name));
+      }
+    });
+
+    return holder.innerHTML;
+  }
+
+  function summaryTemplate() {
+    if (!state.currentSummaryMd) {
+      throw new Error("لا يوجد ملخص جاهز للتصدير.");
+    }
+
+    return `
+      <section class="cover summary-cover">
+        <div class="brand">نَظِّمْلِي</div>
+        <div class="eyebrow">ACADEMIC STUDY REPORT</div>
+        <h1>الملخص الشامل</h1>
+        <p>دليلك المنظم للفهم والمراجعة</p>
+        <div class="gold-line"></div>
+        <span>${new Date().toLocaleDateString("ar-EG")}</span>
+      </section>
+      <main class="summary-content">${printMarkdown(state.currentSummaryMd)}</main>
+      <footer class="end-note">انتهى الملخص — بالتوفيق في دراستك</footer>
+    `;
+  }
+
+  function planTemplate() {
+    const plan = state.currentPlan;
+
+    if (!plan || !Array.isArray(plan.tasks)) {
+      throw new Error("لا توجد خطة مذاكرة جاهزة للتصدير.");
+    }
+
+    const completed = state.completedTaskIds || [];
+
+    const tasks = plan.tasks.map((task, index) => {
+      const id = task.id ?? index + 1;
+      const done = completed.includes(id);
+
+      return `
+        <article class="task-card ${done ? "done" : ""}">
+          <div class="task-rail">
+            <span class="task-check">${done ? "✓" : "□"}</span>
+            <b>${index + 1}</b>
+          </div>
+          <div class="task-detail">
+            <span class="task-day">${escapeHtml(task.date_label || `المهمة ${index + 1}`)}</span>
+            <h3>${escapeHtml(task.title || "جلسة مذاكرة")}</h3>
+            <div class="task-time">◷ ${escapeHtml(task.time_slot || "وقت مرن")}</div>
+            <p>${escapeHtml(task.action_steps || "")}</p>
+            <small>${done ? "تم الإنجاز" : "مهمة قيد التنفيذ"}</small>
+          </div>
+        </article>
+      `;
+    }).join("");
+
+    return `
+      <section class="planner-cover">
+        <div class="planner-brand">نَظِّمْلِي <span>SMART STUDY PLANNER</span></div>
+        <div class="planner-main">
+          <span>خطتك الدراسية الشخصية</span>
+          <h1>كل يوم خطوة<br>نحو هدفك</h1>
+          <p>${escapeHtml(plan.rescuer_message || "خطة واضحة ومذاكرة منظمة وإنجاز مستمر.")}</p>
+          <div class="duration-box">
+            <small>المدة الكلية</small>
+            <strong>${escapeHtml(plan.total_estimated_time || "حسب الجدول")}</strong>
+          </div>
+        </div>
+        <div class="planner-date">${new Date().toLocaleDateString("ar-EG")}</div>
+      </section>
+      <main class="planner-content">
+        <header class="planner-heading">
+          <span>01</span>
+          <div><h2>جدول التنفيذ</h2><p>تابع مهامك خطوة بخطوة</p></div>
+        </header>
+        <aside class="planner-tip">
+          <strong>نصيحة لتنظيم الجلسات</strong>
+          <p>${escapeHtml(plan.pomodoro_tip || "قسّم وقت المذاكرة إلى جلسات تركيز تتخللها فترات راحة.")}</p>
+        </aside>
+        <div class="timeline">${tasks}</div>
+        <aside class="planner-note">
+          <strong>تذكير لك</strong>
+          <p>التقدم المستمر أهم من إنجاز كل شيء دفعة واحدة. ابدأ بمهمتك التالية وسجّل إنجازك.</p>
+        </aside>
+      </main>
+    `;
+  }
+
+  function quizTemplate() {
+    const quiz = state.currentQuiz;
+
+    if (!quiz || !Array.isArray(quiz.questions)) {
+      throw new Error("لا يوجد اختبار جاهز للتصدير.");
+    }
+
+    const letters = ["أ", "ب", "ج", "د"];
+
+    const questions = quiz.questions.map((q, index) => `
+      <article class="question-card">
+        <h3><span>${index + 1}</span>${escapeHtml(q.question || "")}</h3>
+        <div class="options">
+          ${(q.options || []).map((option, optionIndex) => `
+            <div class="option">
+              <b>${letters[optionIndex] || optionIndex + 1}</b>
+              <span>${escapeHtml(option)}</span>
+            </div>
+          `).join("")}
+        </div>
+      </article>
+    `).join("");
+
+    const answers = quiz.questions.map((q, index) => {
+      const options = q.options || [];
+      const right = Number(q.correct_index);
+      const answer = Number.isInteger(right) ? options[right] : "";
+
+      return `
+        <article class="answer-item">
+          <strong>السؤال ${index + 1}: ${escapeHtml(answer || "غير محدد")}</strong>
+          <p>${escapeHtml(q.explanation || "")}</p>
+        </article>
+      `;
+    }).join("");
+
+    return `
+      <section class="cover exam-cover">
+        <div class="brand">نَظِّمْلِي</div>
+        <div class="eyebrow">PRACTICE & ASSESSMENT</div>
+        <h1>${escapeHtml(quiz.quiz_title || "ورقة اختبار")}</h1>
+        <p>ورقة أسئلة للمراجعة وقياس الفهم</p>
+        <div class="student-fields">
+          <span>اسم الطالب: ........................................</span>
+          <span>التاريخ: ........ / ........ / ........</span>
+        </div>
+      </section>
+      <main class="exam-content">
+        <div class="exam-instructions">
+          <strong>تعليمات الاختبار</strong>
+          <span>اقرأ كل سؤال بعناية، ثم اختر الإجابة الصحيحة.</span>
+          <span>عدد الأسئلة: ${quiz.questions.length}</span>
+        </div>
+        ${questions}
+      </main>
+      <section class="answer-key">
+        <div class="answer-title">
+          <span>ANSWER KEY</span>
+          <h2>نموذج الإجابة والتفسير</h2>
+          <p>صفحات منفصلة لمراجعة الإجابات بعد حل الاختبار.</p>
+        </div>
+        ${answers}
+      </section>
+    `;
+  }
+
+  const styles = `
+    * { box-sizing: border-box; }
+    @page { size: A4; margin: 15mm 14mm; }
+    body {
+      direction: rtl; text-align: right; margin: 0; padding: 0;
+      color: #23352b; background: white;
+      font-family: Tahoma, Arial, sans-serif; font-size: 12px; line-height: 1.9;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .toolbar {
+      position: sticky; top: 0; z-index: 5; padding: 12px;
+      background: #eef4ee; text-align: center;
+    }
+    .toolbar button {
+      background: #155b43; color: white; border: 0; border-radius: 9px;
+      padding: 10px 22px; font-weight: bold; cursor: pointer;
+    }
+    .cover {
+      min-height: 245mm; padding: 28mm 18mm; color: white;
+      display: flex; flex-direction: column; justify-content: center;
+      page-break-after: always;
+    }
+    .summary-cover {
+      background: linear-gradient(145deg, #103f32, #1d7655);
+      border-bottom: 8px solid #c6a86a;
+    }
+    .exam-cover {
+      background: linear-gradient(145deg, #173c33, #326c53);
+      border-top: 9px solid #c6a86a;
+    }
+    .brand { font-size: 19px; font-weight: 900; }
+    .eyebrow { margin-top: 35px; font-size: 10px; letter-spacing: 2px; opacity: .8; }
+    .cover h1 { font-size: 34px; line-height: 1.5; margin: 13px 0; }
+    .cover p { color: #edf5ed; font-size: 15px; }
+    .gold-line { height: 4px; width: 75px; background: #d9bd7d; margin: 25px 0; }
+    .summary-content { font-size: 12px; line-height: 2; }
+    .summary-content h1, .summary-content h2 {
+      color: #155b43; border-bottom: 2px solid #d9e7dc;
+      padding-bottom: 7px; margin-top: 25px;
+    }
+    .summary-content h3, .summary-content h4 { color: #28634f; margin-top: 18px; }
+    .summary-content li { margin: 5px 0; }
+    .summary-content ul, .summary-content ol { padding-right: 25px; }
+    .summary-content blockquote {
+      border-right: 4px solid #b59a60; padding: 8px 14px;
+      background: #f3f6f0; margin: 14px 0;
+    }
+    .summary-content table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+    .summary-content th { background: #e6efe6; color: #164c3a; }
+    .summary-content th, .summary-content td { border: 1px solid #d2ded4; padding: 7px; }
+    .end-note { text-align: center; margin: 30px 0; color: #557465; }
+    .student-fields { display: grid; gap: 22px; margin-top: 45px; font-size: 13px; }
+    .exam-instructions {
+      display: flex; flex-wrap: wrap; gap: 12px; padding: 12px;
+      background: #f0f5ef; border: 1px solid #d8e5d9; margin-bottom: 20px;
+      border-radius: 10px;
+    }
+    .question-card {
+      border: 1px solid #d9e3db; border-radius: 11px; padding: 13px 15px;
+      margin: 14px 0; page-break-inside: avoid;
+    }
+    .question-card h3 { color: #174d3b; margin: 0 0 10px; font-size: 13px; }
+    .question-card h3 span {
+      display: inline-block; width: 25px; height: 25px; line-height: 25px;
+      text-align: center; border-radius: 50%; background: #e6f0e8; margin-left: 8px;
+    }
+    .options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .option { display: flex; align-items: center; gap: 8px; padding: 6px; }
+    .option b {
+      border: 1px solid #a6b9aa; border-radius: 50%; width: 23px; height: 23px;
+      text-align: center; line-height: 21px;
+    }
+    .answer-key { page-break-before: always; padding-top: 10px; }
+    .answer-title {
+      background: #eaf2eb; padding: 18px; border-right: 5px solid #1c7655;
+      margin-bottom: 20px;
+    }
+    .answer-title h2 { color: #155b43; margin: 5px 0; }
+    .answer-item { padding: 12px; border-bottom: 1px solid #d9e3db; page-break-inside: avoid; }
+    .answer-item strong { color: #155b43; }
+    .answer-item p { margin: 5px 0; }
+    .planner-cover {
+      min-height: 250mm; page-break-after: always; padding: 20mm;
+      color: white; background: #143f32; display: flex; flex-direction: column;
+      justify-content: space-between;
+    }
+    .planner-brand { font-size: 19px; font-weight: 900; }
+    .planner-brand span { color: #c6d8c7; font-size: 9px; letter-spacing: 1px; }
+    .planner-main { padding: 15mm 0; }
+    .planner-main > span { color: #d6c18b; }
+    .planner-main h1 { font-size: 39px; line-height: 1.55; margin: 15px 0; }
+    .planner-main p { color: #e3eee5; font-size: 14px; }
+    .duration-box {
+      display: inline-flex; flex-direction: column; margin-top: 25px;
+      background: #215743; border: 1px solid #72917c; padding: 12px 24px;
+      border-radius: 12px;
+    }
+    .duration-box strong { font-size: 20px; }
+    .planner-date { color: #d1dfd3; }
+    .planner-heading { display: flex; gap: 12px; align-items: center; margin-bottom: 18px; }
+    .planner-heading > span {
+      color: white; background: #1b654a; border-radius: 10px;
+      padding: 8px 13px; font-size: 20px; font-weight: 900;
+    }
+    .planner-heading h2 { color: #164e3b; font-size: 22px; margin: 0; }
+    .planner-heading p { color: #718477; margin: 0; }
+    .planner-tip {
+      padding: 12px 15px; border-radius: 10px; background: #f0f5ed;
+      border-right: 4px solid #b99c61; margin-bottom: 20px;
+    }
+    .planner-tip strong { color: #155b43; }
+    .planner-tip p { margin: 4px 0 0; }
+    .task-card {
+      display: flex; gap: 12px; padding: 13px 12px; margin: 12px 0;
+      border: 1px solid #d8e2d9; border-radius: 12px; page-break-inside: avoid;
+    }
+    .task-rail { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+    .task-check {
+      border: 1.5px solid #438365; color: #155b43; width: 25px; height: 25px;
+      text-align: center; line-height: 22px; border-radius: 7px; font-weight: bold;
+    }
+    .task-rail > b { color: #829487; }
+    .task-detail { flex: 1; }
+    .task-day { color: #8a7446; font-size: 10px; font-weight: bold; }
+    .task-detail h3 { margin: 2px 0 5px; color: #174e3b; font-size: 15px; }
+    .task-time { color: #28634f; font-weight: bold; font-size: 11px; }
+    .task-detail p { margin: 6px 0; }
+    .task-detail small { color: #60796a; }
+    .task-card.done { background: #eff6ef; border-color: #9bbba2; }
+    .planner-note {
+      margin-top: 22px; padding: 14px; background: #f5f3e9;
+      border-radius: 10px; border-right: 4px solid #b99c61;
+    }
+    .planner-note strong { color: #725c2e; }
+    @media print { .toolbar { display: none !important; } }
+    @media screen {
+      body { max-width: 850px; margin: 20px auto; padding: 0 16px 30px; }
+      .cover, .planner-cover { min-height: 500px; }
+    }
+  `;
+
+  function openPdf(title, content) {
+    const win = window.open("", "_blank");
+
+    if (!win) {
+      showAlert("اسمحي بالنوافذ المنبثقة لهذا الموقع حتى تتمكني من حفظ PDF.");
+      return;
+    }
+
+    win.document.open();
+    win.document.write(`<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>${styles}</style>
+</head>
+<body>
+<div class="toolbar">
+  <button onclick="window.print()" type="button">حفظ / تحميل PDF</button>
+  <span>اختاري Save as PDF من نافذة الطباعة.</span>
+</div>
+${content}
+</body>
+</html>`);
+    win.document.close();
+
+    win.setTimeout(() => {
+      win.focus();
+      win.print();
+    }, 800);
+  }
+
+  function exportPdf(kind) {
+    try {
+      if (kind === "summary") openPdf("ملخص نظّملي", summaryTemplate());
+      if (kind === "plan") openPdf("خطة مذاكرة نظّملي", planTemplate());
+      if (kind === "quiz") openPdf("اختبار نظّملي", quizTemplate());
+    } catch (error) {
+      showAlert(error.message || "تعذر تجهيز ملف PDF.");
+    }
+  }
+
+  function makeButton(kind, label) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.nazamlyPdf = kind;
+    button.className = "px-3 py-2 rounded-xl text-xs font-extrabold cta-primary-btn border cursor-pointer";
+    button.textContent = label;
+    return button;
+  }
+
+  function installButtons() {
+    const summaryButton = document.getElementById("printSummaryBtn");
+    if (summaryButton) summaryButton.textContent = "📄 تحميل PDF";
+
+    const planHeader = document.querySelector("#planResultSection > div:first-child");
+    if (planHeader && !planHeader.querySelector('[data-nazamly-pdf="plan"]')) {
+      planHeader.appendChild(makeButton("plan", "📅 تحميل الخطة PDF"));
+    }
+
+    const quizHeader = document.querySelector("#quizResultSection > div:first-child");
+    if (quizHeader && !quizHeader.querySelector('[data-nazamly-pdf="quiz"]')) {
+      quizHeader.appendChild(makeButton("quiz", "📝 تحميل الاختبار PDF"));
+    }
+  }
+
+  document.addEventListener("click", (event) => {
+    const summaryButton = event.target.closest("#printSummaryBtn");
+    const customButton = event.target.closest("[data-nazamly-pdf]");
+
+    if (summaryButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      exportPdf("summary");
+      return;
+    }
+
+    if (customButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      exportPdf(customButton.dataset.nazamlyPdf);
+    }
+  }, true);
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", installButtons, { once: true });
+  } else {
+    installButtons();
+  }
+})();
