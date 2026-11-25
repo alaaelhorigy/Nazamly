@@ -41,7 +41,7 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-MODEL_ID = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+MODEL_ID = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
 FALLBACK_MODELS = [
     x.strip()
     for x in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite").split(",")
@@ -1142,10 +1142,10 @@ async def generate_selected_tts(
     audio, engine = await synthesize_arabic_mp3_base64(
         clean_text,
         selected_voice,
-        allow_fallback=False,
+        allow_fallback=True,
     )
 
-    if not audio or engine != "edge-tts":
+    if not audio or engine not in ("edge-tts", "gtts-fallback"):
         raise HTTPException(
             status_code=503,
             detail="\u062a\u0639\u0630\u0631 \u062a\u0648\u0644\u064a\u062f \u0627\u0644\u0635\u0648\u062a \u0627\u0644\u0645\u062e\u062a\u0627\u0631. \u062d\u0627\u0648\u0644\u064a \u0645\u0631\u0629 \u0623\u062e\u0631\u0649.",
@@ -1162,7 +1162,7 @@ async def generate_selected_tts(
 async def preview_tts_voice(voice: str = Form("female")):
     sample = "مرحباً بك في نظّملي. سأشرح لك الدرس خطوةً خطوة، وبأسلوب واضح وهادئ."
     audio, engine = await synthesize_arabic_mp3_base64(
-        sample, voice, allow_fallback=False
+        sample, voice, allow_fallback=True
     )
     if not audio:
         raise HTTPException(
